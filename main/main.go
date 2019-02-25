@@ -1,7 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/lezhenin/gotorrentclient/metadata"
+)
 
-func main()  {
+func main() {
 	fmt.Println("Hello world!")
+	metadata.ReadMetada("")
 }
