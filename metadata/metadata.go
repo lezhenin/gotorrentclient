@@ -133,7 +133,8 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 	}
 
 	hash := sha1.New()
-	info.HashSHA1 = hash.Sum(data)
+	hash.Write(data)
+	info.HashSHA1 = hash.Sum(nil)
 
 	info.PieceLength, err = getInt(infoDict, "piece length")
 	if err != nil {
