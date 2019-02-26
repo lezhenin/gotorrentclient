@@ -9,9 +9,9 @@ import (
 )
 
 type FileInfo struct {
-	Length  int
-	Path    string
-	HashMD5 string
+	Length  int64
+	Path    []string
+	HashMD5 []byte
 }
 
 type Info struct {
@@ -19,8 +19,9 @@ type Info struct {
 	Pieces      []byte
 	Private     bool
 	MultiFile   bool
+	Name        string
 	Files       []FileInfo
-	SumSHA1     []byte
+	HashSHA1    []byte
 }
 
 type Metadata struct {
@@ -54,26 +55,11 @@ func (e RequiredFieldError) Error() string {
 type dictionary map[string]interface{}
 type list []interface{}
 
-//func getListSlice(dict dictionary, key string) (value []list, err error) {
-//
-//	item, ok := dict[key]; if ok {
-//		item, ok := item.(list); if ok {
-//			for
-//		} else {
-//			return list{}, DecodeError{dict[key], key}
-//		}
-//	} else {
-//		return list{}, RequiredFieldError{dict, key}
-//	}
-//
-//	return value, nil
-//}
-
 func getList(dict dictionary, key string) (value list, err error) {
 
 	item, ok := dict[key]
 	if ok {
-		item, ok := item.(list)
+		item, ok := item.([]interface{})
 		if ok {
 			value = item
 		} else {
@@ -90,7 +76,7 @@ func getDict(dict dictionary, key string) (value dictionary, err error) {
 
 	item, ok := dict[key]
 	if ok {
-		item, ok := item.(dictionary)
+		item, ok := item.(map[string]interface{})
 		if ok {
 			value = item
 		} else {
@@ -147,30 +133,80 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 	}
 
 	hash := sha1.New()
-	info.SumSHA1 = hash.Sum(data)
+	info.HashSHA1 = hash.Sum(data)
 
-	pieceLength, ok := infoDict["piece length"]
-	if ok {
-		pieceLength, ok := pieceLength.(int64)
-		if ok {
-			info.PieceLength = pieceLength
-		} else {
-			return Info{}, DecodeError{infoDict["piece length"], "piece length"}
-		}
-	} else {
-		return Info{}, RequiredFieldError{infoDict, "piece length"}
+	info.PieceLength, err = getInt(infoDict, "piece length")
+	if err != nil {
+		return Info{}, err
 	}
 
-	pieces, ok := infoDict["pieces"]
-	if ok {
-		pieces, ok := pieces.(string)
-		if ok {
-			info.Pieces = []byte(pieces)
-		} else {
-			return Info{}, DecodeError{infoDict["pieces"], "pieces"}
-		}
+	pieces, err := getString(infoDict, "pieces")
+	if err != nil {
+		return Info{}, err
 	} else {
-		return Info{}, RequiredFieldError{infoDict, "pieces"}
+		info.Pieces = []byte(pieces)
+	}
+
+	private, err := getInt(infoDict, "private")
+	if err == nil {
+		info.Private = private != 0
+	}
+
+	info.Name, err = getString(infoDict, "name")
+	if err != nil {
+		return Info{}, err
+	}
+
+	length, err := getInt(infoDict, "length")
+	if err != nil {
+		info.MultiFile = true
+	}
+
+	if info.MultiFile {
+		files, err := getList(infoDict, "files")
+		if err != nil {
+			return Info{}, err
+		}
+
+		for _, file := range files {
+			fileDict, ok := file.(map[string]interface{})
+			if ok {
+
+				fileInfo := FileInfo{}
+
+				pathList, err := getList(fileDict, "path")
+				if err != nil {
+					return Info{}, err
+				}
+
+				for _, pathItem := range pathList {
+					pathString, ok := pathItem.(string)
+					if ok {
+						fileInfo.Path = append(fileInfo.Path, pathString)
+					} else {
+						return Info{}, DecodeError{pathItem, "path"}
+					}
+				}
+
+				fileInfo.Length, err = getInt(fileDict, "length")
+				if err != nil {
+					return Info{}, err
+				}
+
+				hashMD5, err := getString(fileDict, "md5sum")
+				if err == nil {
+					fileInfo.HashMD5 = []byte(hashMD5)
+				}
+			}
+		}
+
+	} else {
+		fileInfo := FileInfo{Length: length, Path: []string{info.Name}}
+		hashMD5, err := getString(infoDict, "md5sum")
+		if err == nil {
+			fileInfo.HashMD5 = []byte(hashMD5)
+		}
+		info.Name = "./"
 	}
 
 	return info, nil
@@ -195,36 +231,29 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 		return Metadata{}, err
 	}
 
-	//announceList, err := getList(metadataDict, "announce-list")
-	//for outerIndex, innerList := range announceList {
-	//	innerList, ok := innerList.([]interface{})
-	//}
-	//
-	//TODO try to simplify
-
-	announceList, ok := metadataDict["announce-list"]
-	if ok {
-		announceList, ok := announceList.([]interface{})
-		if ok {
-			metadata.AnnounceList = make([][]string, len(announceList))
-			for outerIndex, innerList := range announceList {
-				innerList, ok := innerList.([]interface{})
-				if ok {
-					metadata.AnnounceList[outerIndex] = make([]string, len(innerList))
-					for innerIndex := range innerList {
-						value, ok := innerList[innerIndex].(string)
-						if ok {
-							metadata.AnnounceList[outerIndex][innerIndex] = value
-						}
+	announceList, err := getList(metadataDict, "announce-list")
+	if err == nil {
+		for _, innerList := range announceList {
+			innerList, ok := innerList.([]interface{})
+			if ok {
+				var stringList []string
+				for _, item := range innerList {
+					stringItem, ok := item.(string)
+					if ok {
+						stringList = append(stringList, stringItem)
 					}
 				}
-
+				if len(stringList) > 0 {
+					metadata.AnnounceList = append(metadata.AnnounceList, stringList)
+				}
 			}
 		}
 	}
 
 	creationDate, err := getInt(metadataDict, "creation date")
-	metadata.CreationDate = time.Unix(creationDate, 0)
+	if err == nil {
+		metadata.CreationDate = time.Unix(creationDate, 0)
+	}
 
 	metadata.Encoding, err = getString(metadataDict, "encoding")
 
@@ -235,10 +264,9 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 	return metadata, nil
 }
 
-func ReadMetadata(filename string) Metadata {
+func ReadMetadata(filename string) (metadata Metadata, err error) {
 
 	data, err := ioutil.ReadFile(filename)
-
 	if err != nil {
 		panic(err)
 	}
@@ -246,22 +274,20 @@ func ReadMetadata(filename string) Metadata {
 	var bencodedData interface{}
 
 	err = bencode.DecodeBytes(data, &bencodedData)
-
 	if err != nil {
 		panic(err)
 	}
 
 	metadataDict, ok := bencodedData.(map[string]interface{})
-
 	if !ok {
 		panic(ok)
 	}
 
-	metadata, err := metadataDictToStruct(metadataDict)
+	metadata, err = metadataDictToStruct(metadataDict)
+	if err != nil {
+		return Metadata{}, err
+	}
 
-	fmt.Printf("err: %v, value: %v - %T", err, metadata, metadata)
-
-	return metadata
-	//return metadataFromDict()
+	return metadata, nil
 
 }
