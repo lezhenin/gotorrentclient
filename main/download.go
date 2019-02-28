@@ -20,10 +20,10 @@ type Download struct {
 	Metadata      metadata.Metadata
 	PeerId        []byte
 	InfoHash      []byte
-	Port          int64
-	Uploaded      int64
-	Downloaded    int64
-	Left          int64
+	Port          uint16
+	Uploaded      uint64
+	Downloaded    uint64
+	Left          uint64
 	Compat        bool
 	NoPeerId      bool
 	State         DownloadState
