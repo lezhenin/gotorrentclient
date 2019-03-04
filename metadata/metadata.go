@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/zeebo/bencode"
 	"io/ioutil"
+	"log"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type Info struct {
 	Name        string
 	Files       []FileInfo
 	HashSHA1    []byte
+	TotalLength int64
 }
 
 type Metadata struct {
@@ -198,16 +200,22 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 				if err == nil {
 					fileInfo.HashMD5 = []byte(hashMD5)
 				}
+
+				info.Files = append(info.Files, fileInfo)
+				info.TotalLength += fileInfo.Length
+
 			}
 		}
 
 	} else {
+
 		fileInfo := FileInfo{Length: length, Path: []string{info.Name}}
 		hashMD5, err := getString(infoDict, "md5sum")
 		if err == nil {
 			fileInfo.HashMD5 = []byte(hashMD5)
 		}
-		info.Name = "./"
+		info.Name = ""
+		info.TotalLength = length
 	}
 
 	return info, nil
@@ -267,16 +275,18 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 
 func ReadMetadata(filename string) (metadata Metadata, err error) {
 
+	log.Printf("Read metadata from %s\n", filename)
+
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		panic(err)
+		log.Panicf("Can not read file %s: %s\n", filename, err.Error())
 	}
 
 	var bencodedData interface{}
 
 	err = bencode.DecodeBytes(data, &bencodedData)
 	if err != nil {
-		panic(err)
+		log.Panicf("Can not decode bencoded data from file %s: %s\n", filename, err.Error())
 	}
 
 	metadataDict, ok := bencodedData.(map[string]interface{})
@@ -288,6 +298,9 @@ func ReadMetadata(filename string) (metadata Metadata, err error) {
 	if err != nil {
 		return Metadata{}, err
 	}
+
+	log.Printf("Metadata was read successfully: files count = %d, total length = %d\n",
+		len(metadata.Info.Files), metadata.Info.TotalLength)
 
 	return metadata, nil
 
