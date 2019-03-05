@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"sync"
 )
 
 type Stage int
@@ -18,10 +19,30 @@ const (
 )
 
 type State struct {
-	Uploaded   uint64
-	Downloaded uint64
-	Left       uint64
+	uploaded   uint64
+	downloaded uint64
+	left       uint64
 	Stage      Stage
+
+	mutex sync.Mutex
+}
+
+func (s *State) GetDownloadedByteCount() uint64 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.downloaded
+}
+
+func (s *State) GetUploadedByteCount() uint64 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.uploaded
+}
+
+func (s *State) GetLeftByteCount() uint64 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.left
 }
 
 type Download struct {
@@ -35,14 +56,18 @@ type Download struct {
 	ClientIP          string
 	DownloadPath      string
 	Files             []*os.File
-	TrackerConnection *tracker.TrackerConnection
+	TrackerConnection *tracker.Connection
 }
 
 func (d *Download) Start() {
 
+	d.TrackerConnection.Start()
+
 }
 
 func (d *Download) Stop() {
+
+	d.TrackerConnection.Stop()
 
 }
 
@@ -95,7 +120,7 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	}
 
 	download.DownloadPath = downloadPath
-	download.State.Left = uint64(download.Metadata.Info.TotalLength)
+	download.State.left = uint64(download.Metadata.Info.TotalLength)
 
 	err = createFiles(download)
 
@@ -109,7 +134,12 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 		panic(err)
 	}
 
-	download.TrackerConnection, err = tracker.NewTrackerConnection(&download.State, download.Metadata.Announce)
+	download.TrackerConnection, err =
+		tracker.NewTrackerConnection(
+			download.Metadata.Announce, download.PeerId,
+			download.Metadata.Info.HashSHA1, download.Port,
+			&download.State)
+
 	if err != nil {
 		return nil, err
 	}

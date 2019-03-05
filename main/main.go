@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/lezhenin/gotorrentclient/download"
+	"time"
 )
 
 func main() {
@@ -14,11 +15,14 @@ func main() {
 
 	//fmt.Printf("%v - %T\n", data, data)
 
-	_, err := download.NewDownload(filename,
+	d, err := download.NewDownload(filename,
 		"/home/iurii/Documents/go/src/github.com/lezhenin/gotorrentclient/filetest")
 
 	if err != nil {
 		panic(err)
 	}
 
+	d.Start()
+	time.Sleep(125 * time.Second)
+	d.Stop()
 }
