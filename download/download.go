@@ -62,6 +62,15 @@ type Download struct {
 func (d *Download) Start() {
 
 	d.TrackerConnection.Start()
+	seeder, err := tracker.NewSeeder(d.TrackerConnection.Seeders[6], d.Metadata.Info.HashSHA1, d.PeerId)
+	if err != nil {
+		panic(err)
+	}
+
+	err = seeder.SendHandshakeMessage()
+	if err != nil {
+		panic(err)
+	}
 
 }
 

@@ -11,11 +11,6 @@ import (
 	"time"
 )
 
-type Seeder struct {
-	NetAddress net.Addr
-	Complete   bool
-}
-
 type Event uint32
 
 const (
@@ -37,7 +32,7 @@ type Connection struct {
 	infoHash      []byte
 	listenPort    uint16
 
-	seeders []Seeder
+	Seeders []string
 
 	trackerURL    *url.URL
 	connectionUDP io.ReadWriter
@@ -72,7 +67,7 @@ func (c *Connection) routine() {
 				panic(err)
 			}
 
-			c.interval, c.seeders, err = c.SendAnnounce(None)
+			c.interval, c.Seeders, err = c.SendAnnounce(None)
 			if err != nil {
 				panic(err)
 			}
@@ -89,7 +84,7 @@ func (c *Connection) routine() {
 				continue
 			}
 
-			c.interval, c.seeders, err = c.SendAnnounce(event)
+			c.interval, c.Seeders, err = c.SendAnnounce(event)
 			if err != nil {
 				c.errorChannel <- err
 				continue
@@ -259,7 +254,7 @@ func (c *Connection) EstablishConnection() (err error) {
 
 }
 
-func (c *Connection) SendAnnounce(event Event) (interval uint32, seeders []Seeder, err error) {
+func (c *Connection) SendAnnounce(event Event) (interval uint32, seeders []string, err error) {
 
 	transactionId := rand.Uint32()
 	request := c.makeAnnounceRequest(transactionId, event)
@@ -398,12 +393,13 @@ func (c *Connection) makeAnnounceRequest(transactionId uint32, event Event) (dat
 //4           32-bit integer  transaction_id
 //8           32-bit integer  interval
 //12          32-bit integer  leechers
-//16          32-bit integer  seeders
+//16          32-bit integer  Seeders
 //20 + 6 * n  32-bit integer  IP address
 //24 + 6 * n  16-bit integer  TCP port
 //20 + 6 * N
 
-func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (interval uint32, seeders []Seeder, err error) {
+func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (
+	interval uint32, seederAddresses []string, err error) {
 
 	actionBytes := response[0:4]
 	transactionIdBytes := response[4:8]
@@ -426,7 +422,7 @@ func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (inter
 	//seedersNumber := binary.BigEndian.Uint32(seedersNumberBytes)
 
 	receivedPeersCount := (len(response) - 20) / 6
-	seeders = make([]Seeder, receivedPeersCount)
+	seederAddresses = make([]string, receivedPeersCount)
 
 	for i := 0; i < int(receivedPeersCount); i++ {
 
@@ -437,13 +433,12 @@ func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (inter
 
 		fmt.Println(addrString)
 
-		seeders[i].NetAddress, err = net.ResolveTCPAddr("tcp", addrString)
-
+		seederAddresses[i] = addrString
 		if err != nil {
 			return 0, nil, err
 		}
 
 	}
 
-	return binary.BigEndian.Uint32(intervalBytes), seeders, nil
+	return binary.BigEndian.Uint32(intervalBytes), seederAddresses, nil
 }
