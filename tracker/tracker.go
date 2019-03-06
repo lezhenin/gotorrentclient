@@ -379,7 +379,7 @@ func (c *Connection) makeAnnounceRequest(transactionId uint32, event Event) (dat
 	binary.BigEndian.PutUint32(eventBytes, uint32(event))
 	binary.BigEndian.PutUint32(addressIpBytes, 0) // default
 	binary.BigEndian.PutUint32(keyBytes, 0)
-	binary.BigEndian.PutUint32(numWantBytes, 10) // default
+	binary.BigEndian.PutUint32(numWantBytes, 50) // default
 	binary.BigEndian.PutUint16(portBytes, c.listenPort)
 
 	copy(infoHashBytes, c.infoHash)

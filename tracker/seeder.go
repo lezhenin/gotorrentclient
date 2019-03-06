@@ -1,12 +1,17 @@
 package tracker
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/lezhenin/gotorrentclient/bitfield"
 	"io"
+	"log"
 	"net"
+	"time"
 )
+
+const protocolId string = "BitTorrent protocol"
 
 const blockSize int = 16 * 1024
 const bufferSize = blockSize + 16
@@ -44,6 +49,58 @@ type Seeder struct {
 
 	connectionTCP io.ReadWriter
 	buffer        []byte
+
+	incoming  chan []byte
+	outcoming chan []byte
+}
+
+func (s *Seeder) Routine() {
+
+	//go func() {
+	//	for {
+	//		n, err := s.connectionTCP.Read(s.buffer)
+	//		if err != nil {
+	//			fmt.Println(err)
+	//			return
+	//			//panic(err)
+	//		}
+	//		data := make([]byte, n)
+	//		copy(data, s.buffer[:n])
+	//		s.incoming <- data
+	//	}
+	//}()
+	//
+	//go func() {
+	//	for {
+	//		data := <-s.outcoming
+	//		_, err := s.connectionTCP.Write(data)
+	//		if err != nil {
+	//			panic(err)
+	//		}
+	//	}
+	//}()
+
+	s.outcoming <- makeHandshakeMessage(s.InfoHash, s.MyPeerId)
+	message := <-s.incoming
+
+	var err error
+	s.PeerId, err = parseHandshakeMessage(message, s.InfoHash)
+	if err != nil {
+		panic(err)
+	}
+
+	// todo panic: parse message: byte slice length and message length are not equal
+	//for {
+	//	select {
+	//	case message := <- s.incoming:
+	//		id, payload, err := parseMessage(message)
+	//		if err != nil {
+	//			panic(err)
+	//		}
+	//		log.Printf("Received %d, %v", id, payload)
+	//	}
+	//}
+
 }
 
 func NewSeeder(addr string, infoHash []byte, peerId []byte) (seeder *Seeder, err error) {
@@ -64,6 +121,21 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte) (seeder *Seeder, err
 	seeder.InfoHash = infoHash
 
 	seeder.buffer = make([]byte, bufferSize)
+
+	fmt.Printf("connect to %s\n", seeder.NetAddress.String())
+
+	seeder.incoming = make(chan []byte, 1)
+	seeder.outcoming = make(chan []byte, 1)
+
+	seeder.connectionTCP, err = net.DialTimeout(seeder.NetAddress.Network(), seeder.NetAddress.String(), time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	err = seeder.SendHandshakeMessage()
+	if err != nil {
+		return nil, err
+	}
 
 	return seeder, nil
 
@@ -92,7 +164,7 @@ func (s *Seeder) SendHandshakeMessage() (err error) {
 
 func makeHandshakeMessage(infoHash []byte, peerId []byte) (message []byte) {
 
-	protocolString := "BitTorrent protocol"
+	protocolString := protocolId
 
 	message = make([]byte, 49+19)
 
@@ -104,6 +176,35 @@ func makeHandshakeMessage(infoHash []byte, peerId []byte) (message []byte) {
 	binary.BigEndian.PutUint64(message[20:28], 0)
 
 	return message
+}
+
+func parseHandshakeMessage(message []byte, expectedInfoHash []byte) (peerId []byte, err error) {
+
+	if len(message) < 49 {
+		return nil,
+			fmt.Errorf("parse handshake message:"+
+				" byte slice has length %d < 49", len(message))
+	}
+
+	stringLength := message[0]
+	protocolString := string(message[1 : 1+stringLength])
+
+	//_ := binary.BigEndian.Uint64(message[1+stringLength:9+stringLength])
+
+	infoHash := message[9+stringLength : 29+stringLength]
+
+	if bytes.Compare(expectedInfoHash, infoHash) != 0 {
+		return nil, fmt.Errorf("parse handshake message:" +
+			" info hash doesn't match")
+	}
+
+	peerId = message[29+stringLength : 49+stringLength]
+
+	log.Printf("Handshake received: protocol %s, peer id = %v, info hash = %v",
+		protocolString, peerId, infoHash)
+
+	return peerId, nil
+
 }
 
 func makeHavePayload(pieceIndex uint32) (payload []byte) {

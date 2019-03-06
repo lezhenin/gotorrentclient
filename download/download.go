@@ -2,12 +2,14 @@ package download
 
 import (
 	"crypto/rand"
+	"fmt"
 	"github.com/lezhenin/gotorrentclient/metadata"
 	"github.com/lezhenin/gotorrentclient/tracker"
 	"log"
 	"os"
 	"path"
 	"sync"
+	"time"
 )
 
 type Stage int
@@ -62,15 +64,25 @@ type Download struct {
 func (d *Download) Start() {
 
 	d.TrackerConnection.Start()
-	seeder, err := tracker.NewSeeder(d.TrackerConnection.Seeders[6], d.Metadata.Info.HashSHA1, d.PeerId)
-	if err != nil {
-		panic(err)
+
+	seeders := make([]*tracker.Seeder, 50)
+
+	for i := range d.TrackerConnection.Seeders {
+		s, err := tracker.NewSeeder(d.TrackerConnection.Seeders[i], d.Metadata.Info.HashSHA1, d.PeerId)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			//go s.Routine()
+			seeders[i] = s
+		}
 	}
 
-	err = seeder.SendHandshakeMessage()
-	if err != nil {
-		panic(err)
-	}
+	time.Sleep(30 * time.Second)
+
+	//err = seeder.SendHandshakeMessage()
+	//if err != nil {
+	//	panic(err)
+	//}
 
 }
 

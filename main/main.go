@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/lezhenin/gotorrentclient/download"
-	"time"
 )
 
 func main() {
@@ -23,6 +22,6 @@ func main() {
 	}
 
 	d.Start()
-	time.Sleep(125 * time.Second)
+	//time.Sleep(30 * time.Second)
 	d.Stop()
 }
