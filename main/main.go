@@ -6,7 +6,8 @@ import (
 
 func main() {
 
-	filename := "/home/iurii/Downloads/[rutor.is]Two_Steps_From_Hell_-_Dragon_2019.torrent"
+	//filename := "/home/iurii/Downloads/[rutor.is]Two_Steps_From_Hell_-_Dragon_2019.torrent"
+	filename := "/home/iurii/Downloads/[rutor.is]Kino.HD.v.2.1.8.torrent"
 	//_, err := metadata.ReadMetadata(filename)
 	//if err != nil {
 	//	panic(err)

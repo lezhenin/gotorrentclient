@@ -56,29 +56,29 @@ type Seeder struct {
 
 func (s *Seeder) Routine() {
 
-	//go func() {
-	//	for {
-	//		n, err := s.connectionTCP.Read(s.buffer)
-	//		if err != nil {
-	//			fmt.Println(err)
-	//			return
-	//			//panic(err)
-	//		}
-	//		data := make([]byte, n)
-	//		copy(data, s.buffer[:n])
-	//		s.incoming <- data
-	//	}
-	//}()
-	//
-	//go func() {
-	//	for {
-	//		data := <-s.outcoming
-	//		_, err := s.connectionTCP.Write(data)
-	//		if err != nil {
-	//			panic(err)
-	//		}
-	//	}
-	//}()
+	go func() {
+		for {
+			n, err := s.connectionTCP.Read(s.buffer)
+			if err != nil {
+				fmt.Println(err)
+				return
+				//panic(err)
+			}
+			data := make([]byte, n)
+			copy(data, s.buffer[:n])
+			s.incoming <- data
+		}
+	}()
+
+	go func() {
+		for {
+			data := <-s.outcoming
+			_, err := s.connectionTCP.Write(data)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}()
 
 	s.outcoming <- makeHandshakeMessage(s.InfoHash, s.MyPeerId)
 	message := <-s.incoming
@@ -86,6 +86,8 @@ func (s *Seeder) Routine() {
 	var err error
 	s.PeerId, err = parseHandshakeMessage(message, s.InfoHash)
 	if err != nil {
+		fmt.Println(err)
+		return
 		panic(err)
 	}
 
@@ -132,10 +134,10 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte) (seeder *Seeder, err
 		return nil, err
 	}
 
-	err = seeder.SendHandshakeMessage()
-	if err != nil {
-		return nil, err
-	}
+	//err = seeder.SendHandshakeMessage()
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	return seeder, nil
 

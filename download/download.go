@@ -72,12 +72,12 @@ func (d *Download) Start() {
 		if err != nil {
 			fmt.Println(err)
 		} else {
-			//go s.Routine()
+			go s.Routine()
 			seeders[i] = s
 		}
 	}
 
-	time.Sleep(30 * time.Second)
+	time.Sleep(60 * time.Second)
 
 	//err = seeder.SendHandshakeMessage()
 	//if err != nil {
