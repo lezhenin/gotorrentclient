@@ -14,7 +14,8 @@ import (
 const protocolId string = "BitTorrent protocol"
 
 const blockSize int = 16 * 1024
-const bufferSize = blockSize + 16
+const bufferSize = blockSize + 512
+const messageBufferLength = 16
 
 type MessageId uint8
 
@@ -31,6 +32,11 @@ const (
 	Cancel        MessageId = 8
 )
 
+type Message struct {
+	Id      MessageId
+	Payload []byte
+}
+
 type Seeder struct {
 	NetAddress net.Addr
 
@@ -41,8 +47,10 @@ type Seeder struct {
 	PeerChoking    bool
 	PeerInterested bool
 
-	PeerBitfield bitfield.Bitfield
-	PeerId       []byte
+	PeerBitfield *bitfield.Bitfield
+	PieceCount   int
+
+	PeerId []byte
 
 	MyPeerId []byte
 	InfoHash []byte
@@ -50,62 +58,75 @@ type Seeder struct {
 	connectionTCP io.ReadWriter
 	buffer        []byte
 
-	incoming  chan []byte
-	outcoming chan []byte
+	incoming  chan Message
+	outcoming chan Message
+}
+
+func (s *Seeder) ReadRoutine() {
+
+	for {
+		id, payload, err := readMessage(s.connectionTCP)
+		if err != nil {
+			fmt.Println(err)
+			return
+			//panic(err)
+		}
+		s.incoming <- Message{id, payload}
+	}
+
+}
+
+func (s *Seeder) WriteRoutine() {
+
+	//for {
+	//	////data := <-s.outcoming
+	//	//_, err := s.connectionTCP.Write(data)
+	//	//if err != nil {
+	//	//	panic(err)
+	//	//}
+	//}
 }
 
 func (s *Seeder) Routine() {
 
-	go func() {
-		for {
-			n, err := s.connectionTCP.Read(s.buffer)
-			if err != nil {
-				fmt.Println(err)
-				return
-				//panic(err)
-			}
-			data := make([]byte, n)
-			copy(data, s.buffer[:n])
-			s.incoming <- data
-		}
-	}()
-
-	go func() {
-		for {
-			data := <-s.outcoming
-			_, err := s.connectionTCP.Write(data)
-			if err != nil {
-				panic(err)
-			}
-		}
-	}()
-
-	s.outcoming <- makeHandshakeMessage(s.InfoHash, s.MyPeerId)
-	message := <-s.incoming
-
-	var err error
-	s.PeerId, err = parseHandshakeMessage(message, s.InfoHash)
+	err := writeHandshakeMessage(s.connectionTCP, s.InfoHash, s.MyPeerId)
 	if err != nil {
-		fmt.Println(err)
-		return
 		panic(err)
 	}
 
-	// todo panic: parse message: byte slice length and message length are not equal
-	//for {
-	//	select {
-	//	case message := <- s.incoming:
-	//		id, payload, err := parseMessage(message)
-	//		if err != nil {
-	//			panic(err)
-	//		}
-	//		log.Printf("Received %d, %v", id, payload)
-	//	}
-	//}
+	s.PeerId, err = readHandshakeMessage(s.connectionTCP, s.InfoHash)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	go s.ReadRoutine()
+	go s.WriteRoutine()
+
+	//// todo panic: parse message: byte slice length and message length are not equal
+	for {
+		select {
+		case message := <-s.incoming:
+
+			if message.Id == Bitfield {
+				s.PeerBitfield, err = bitfield.NewBitfieldFromBytes(message.Payload, uint(s.PieceCount))
+			}
+
+			if message.Id == Have && s.PeerBitfield != nil {
+				fmt.Println(s.PeerBitfield.EffectiveLength)
+				pieceIndex, err := parseHavePayload(message.Payload)
+				if err != nil {
+					panic(err)
+				}
+				s.PeerBitfield.Set(uint(pieceIndex))
+			}
+
+		}
+	}
 
 }
 
-func NewSeeder(addr string, infoHash []byte, peerId []byte) (seeder *Seeder, err error) {
+func NewSeeder(addr string, pieceCount int, infoHash []byte, peerId []byte) (seeder *Seeder, err error) {
 
 	seeder = new(Seeder)
 	seeder.NetAddress, err = net.ResolveTCPAddr("tcp", addr)
@@ -126,19 +147,15 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte) (seeder *Seeder, err
 
 	fmt.Printf("connect to %s\n", seeder.NetAddress.String())
 
-	seeder.incoming = make(chan []byte, 1)
-	seeder.outcoming = make(chan []byte, 1)
+	seeder.PieceCount = pieceCount
+
+	seeder.incoming = make(chan Message, messageBufferLength)
+	seeder.outcoming = make(chan Message, messageBufferLength)
 
 	seeder.connectionTCP, err = net.DialTimeout(seeder.NetAddress.Network(), seeder.NetAddress.String(), time.Second)
 	if err != nil {
 		return nil, err
 	}
-
-	//err = seeder.SendHandshakeMessage()
-	//if err != nil {
-	//	return nil, err
-	//}
-
 	return seeder, nil
 
 }
@@ -180,7 +197,30 @@ func makeHandshakeMessage(infoHash []byte, peerId []byte) (message []byte) {
 	return message
 }
 
+func writeHandshakeMessage(w io.Writer, infoHash []byte, peerId []byte) (err error) {
+
+	protocolString := protocolId
+
+	message := make([]byte, 49+19)
+
+	message[0] = 19
+	copy(message[1:20], []byte(protocolString))
+	copy(message[28:48], infoHash)
+	copy(message[48:68], peerId)
+
+	binary.BigEndian.PutUint64(message[20:28], 0)
+
+	_, err = w.Write(message)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func parseHandshakeMessage(message []byte, expectedInfoHash []byte) (peerId []byte, err error) {
+
+	fmt.Println(len(message))
 
 	if len(message) < 49 {
 		return nil,
@@ -201,6 +241,54 @@ func parseHandshakeMessage(message []byte, expectedInfoHash []byte) (peerId []by
 	}
 
 	peerId = message[29+stringLength : 49+stringLength]
+
+	log.Printf("Handshake received: protocol %s, peer id = %v, info hash = %v",
+		protocolString, peerId, infoHash)
+
+	return peerId, nil
+
+}
+
+func readHandshakeMessage(r io.Reader, expectedInfoHash []byte) (peerId []byte, err error) {
+
+	stringLengthBuffer := make([]byte, 1)
+
+	_, err = io.ReadAtLeast(r, stringLengthBuffer, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	stringLength := uint8(stringLengthBuffer[0])
+
+	protocolStringBuffer := make([]byte, stringLength)
+	_, err = io.ReadFull(r, protocolStringBuffer)
+	if err != nil {
+		return nil, err
+	}
+	protocolString := string(protocolStringBuffer)
+
+	extensionBuffer := make([]byte, 8)
+	_, err = io.ReadFull(r, extensionBuffer)
+	if err != nil {
+		return nil, err
+	}
+
+	infoHash := make([]byte, 20)
+	_, err = io.ReadFull(r, infoHash)
+	if err != nil {
+		return nil, err
+	}
+
+	if bytes.Compare(expectedInfoHash, infoHash) != 0 {
+		return nil, fmt.Errorf("parse handshake message:" +
+			" info hash doesn't match")
+	}
+
+	peerId = make([]byte, 20)
+	_, err = io.ReadFull(r, peerId)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Printf("Handshake received: protocol %s, peer id = %v, info hash = %v",
 		protocolString, peerId, infoHash)
@@ -301,47 +389,61 @@ func parseCancelPayload(payload []byte) (pieceIndex uint32, begin uint32, length
 func makeMessage(id MessageId, payload []byte) (message []byte) {
 
 	if id == KeepAlive {
-		message = make([]byte, 1)
-		message[0] = 0
+		message = make([]byte, 4)
+		binary.BigEndian.PutUint32(message[0:4], 0)
 		return message
 	}
 
 	length := 1 + len(payload)
-	message = make([]byte, length+1)
-	message[0] = byte(length)
-	message[1] = byte(id)
-	copy(message[2:length], payload)
+	message = make([]byte, length+4)
+	binary.BigEndian.PutUint32(message[0:4], uint32(length))
+	message[4] = byte(id)
+	copy(message[5:(5+length-1)], payload)
 
 	return message
 }
 
-func parseMessage(message []byte) (id MessageId, payload []byte, err error) {
+func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 
-	if len(message) == 0 {
-		return 0, nil,
-			fmt.Errorf("parse message: byte slice is empty")
+	lengthBuffer := make([]byte, 4)
+
+	_, err = io.ReadAtLeast(r, lengthBuffer, 4)
+	if err != nil {
+		panic(err)
 	}
 
-	length := int(message[0])
-
-	if length+1 != len(message) {
-		return 0, nil,
-			fmt.Errorf("parse message: byte slice length and message length are not equal")
-	}
+	length := binary.BigEndian.Uint32(lengthBuffer)
 
 	if length == 0 {
 		return KeepAlive, nil, nil
 	}
 
-	id = MessageId(message[1])
+	idBuffer := make([]byte, 1)
+	_, err = io.ReadAtLeast(r, idBuffer, 1)
+	if err != nil {
+		panic(err)
+	}
+
+	id = MessageId(idBuffer[0])
 
 	if id > Cancel && id != KeepAlive {
 		return 0, nil,
-			fmt.Errorf("parse message: message has unsupported id %d", id)
+			fmt.Errorf("read message: message has unsupported id %d", id)
+	}
+
+	if length == 1 {
+		return id, nil, nil
 	}
 
 	payload = make([]byte, length-1)
-	copy(payload, message[2:])
+	_, err = io.ReadFull(r, payload)
+
+	if err != nil {
+		panic(err)
+	}
+
+	log.Printf("Message received: id = %d, len = %d, payload = %v", id, length, payload)
 
 	return id, payload, nil
+
 }

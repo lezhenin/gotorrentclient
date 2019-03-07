@@ -68,7 +68,8 @@ func (d *Download) Start() {
 	seeders := make([]*tracker.Seeder, 50)
 
 	for i := range d.TrackerConnection.Seeders {
-		s, err := tracker.NewSeeder(d.TrackerConnection.Seeders[i], d.Metadata.Info.HashSHA1, d.PeerId)
+		s, err := tracker.NewSeeder(d.TrackerConnection.Seeders[i], int(d.Metadata.Info.PieceCount),
+			d.Metadata.Info.HashSHA1, d.PeerId)
 		if err != nil {
 			fmt.Println(err)
 		} else {
