@@ -401,6 +401,12 @@ func (c *Connection) makeAnnounceRequest(transactionId uint32, event Event) (dat
 func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (
 	interval uint32, seederAddresses []string, err error) {
 
+	if len(response) < 20 {
+		return 0, nil,
+			fmt.Errorf("parse announce response:"+
+				" message length %d < 20, data = %v", len(response), response)
+	}
+
 	actionBytes := response[0:4]
 	transactionIdBytes := response[4:8]
 	intervalBytes := response[8:12]
