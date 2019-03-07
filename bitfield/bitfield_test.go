@@ -1,20 +1,19 @@
 package bitfield
 
 import (
-	"fmt"
 	"testing"
 )
 
-const bitfieldLength = 30
+const bitfieldLength = 896
 const bitfieldArrayLength = 4
 
 func TestBitfieldCreation(t *testing.T) {
 
-	const testIndex = 29
+	const testIndex = 764
 
 	b := NewBitfield(bitfieldLength)
 
-	if b.arrayLength != 4 {
+	if b.arrayLength != 112 {
 		t.Error("Bitfield byte array has wrong length ")
 	}
 
