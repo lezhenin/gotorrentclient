@@ -17,6 +17,7 @@ type FileInfo struct {
 
 type Info struct {
 	PieceLength int64
+	PieceCount  int64
 	Pieces      []byte
 	Private     bool
 	MultiFile   bool
@@ -148,6 +149,8 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 		return Info{}, err
 	} else {
 		info.Pieces = []byte(pieces)
+		info.PieceCount = int64(len(pieces) / 20)
+		// todo assert
 	}
 
 	private, err := getInt(infoDict, "private")
@@ -299,8 +302,9 @@ func ReadMetadata(filename string) (metadata Metadata, err error) {
 		return Metadata{}, err
 	}
 
-	log.Printf("Metadata was read successfully: files count = %d, total length = %d\n",
-		len(metadata.Info.Files), metadata.Info.TotalLength)
+	log.Printf("Metadata was read successfully:"+
+		" files count = %d, piece count = %d, total length = %d\n",
+		len(metadata.Info.Files), metadata.Info.PieceCount, metadata.Info.TotalLength)
 
 	return metadata, nil
 
