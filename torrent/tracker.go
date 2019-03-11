@@ -1,4 +1,4 @@
-package tracker
+package torrent
 
 import (
 	"encoding/binary"
@@ -167,7 +167,7 @@ func NewTrackerConnection(
 
 	if len(peerId) != 20 {
 		return nil,
-			fmt.Errorf("new tracker connection: peer id has wrong len %d",
+			fmt.Errorf("new torrent connection: peer id has wrong len %d",
 				len(peerId))
 	}
 
@@ -175,7 +175,7 @@ func NewTrackerConnection(
 
 	if len(infoHash) != 20 {
 		return nil,
-			fmt.Errorf("new tracker connection: info hash has wrong len %d",
+			fmt.Errorf("new torrent connection: info hash has wrong len %d",
 				len(infoHash))
 	}
 
@@ -188,7 +188,7 @@ func NewTrackerConnection(
 
 	if trackerConnection.trackerURL.Scheme != "udp" {
 		return nil,
-			fmt.Errorf("new tracker connection: %s tracker protocol is not supported yet",
+			fmt.Errorf("new torrent connection: %s torrent protocol is not supported yet",
 				trackerConnection.trackerURL.Scheme)
 	}
 
@@ -247,7 +247,7 @@ func (c *Connection) EstablishConnection() (err error) {
 	c.expire = false
 	c.expirationTimer.Reset(time.Minute)
 
-	log.Printf("Connection to tracker %s was established: c id = %d",
+	log.Printf("Connection to torrent %s was established: c id = %d",
 		c.trackerURL.String(), c.connectionId)
 
 	return nil
@@ -330,7 +330,7 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 
 }
 
-//func (tracker *Tracker) GetSeeders (n int32) {
+//func (torrent *Tracker) GetSeeders (n int32) {
 //
 //
 //

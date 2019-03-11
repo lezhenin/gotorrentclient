@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/lezhenin/gotorrentclient/download"
+	"github.com/lezhenin/gotorrentclient/torrent"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 
 	//fmt.Printf("%v - %T\n", data, data)
 
-	d, err := download.NewDownload(filename,
+	d, err := torrent.NewDownload(filename,
 		"/home/iurii/Documents/go/src/github.com/lezhenin/gotorrentclient/filetest")
 
 	if err != nil {

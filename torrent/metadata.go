@@ -1,4 +1,4 @@
-package metadata
+package torrent
 
 import (
 	"crypto/sha1"
