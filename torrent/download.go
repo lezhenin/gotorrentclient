@@ -194,6 +194,24 @@ func (d *Download) updateInterested() {
 	}
 }
 
+func (d *Download) requestNextPiece(seeder *Seeder) {
+
+	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
+	if seeder.AmInterested {
+		seeder.outcoming <- Message{Request,
+			makeRequestPayload(uint32(d.lastPiece),
+				uint32(blocksPerPiece*int64(d.lastBlock)),
+				uint32(blockLength)), d.PeerId}
+		d.lastBlock += 1
+	}
+	if int64(d.lastBlock) == blocksPerPiece {
+		d.lastBlock = 0
+		d.lastPiece += 1
+		d.updateInterested()
+	}
+
+}
+
 func (d *Download) handleRoutine() {
 
 	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
@@ -235,18 +253,7 @@ func (d *Download) handleRoutine() {
 
 			case Unchoke:
 				seeder.PeerChoking = false
-				if seeder.AmInterested {
-					seeder.outcoming <- Message{Request,
-						makeRequestPayload(uint32(d.lastPiece),
-							uint32(blocksPerPiece*int64(d.lastBlock)),
-							uint32(blockLength)), d.PeerId}
-					d.lastBlock += 1
-				}
-				if int64(d.lastBlock) == blocksPerPiece {
-					d.lastBlock = 0
-					d.lastPiece += 1
-					d.updateInterested()
-				}
+				d.requestNextPiece(seeder)
 
 			case Interested:
 				seeder.PeerInterested = true
@@ -259,18 +266,7 @@ func (d *Download) handleRoutine() {
 			//
 			case Piece:
 				//todo
-				if seeder.AmInterested {
-					seeder.outcoming <- Message{Request,
-						makeRequestPayload(uint32(d.lastPiece),
-							uint32(blocksPerPiece*int64(d.lastBlock)),
-							uint32(blockLength)), d.PeerId}
-					d.lastBlock += 1
-				}
-				if int64(d.lastBlock) == blocksPerPiece {
-					d.lastBlock = 0
-					d.lastPiece += 1
-					d.updateInterested()
-				}
+				d.requestNextPiece(seeder)
 
 			}
 
