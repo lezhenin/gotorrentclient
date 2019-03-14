@@ -55,7 +55,7 @@ type Seeder struct {
 	MyPeerId []byte
 	InfoHash []byte
 
-	connectionTCP io.ReadWriter
+	connectionTCP net.Conn
 	buffer        []byte
 
 	incoming  chan Message
@@ -115,6 +115,12 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte, incoming chan Messag
 		return nil, err
 	}
 
+	// set deadline 15 second for handshake
+	err = seeder.connectionTCP.SetDeadline(time.Now().Add(15 * time.Second))
+	if err != nil {
+		return nil, err
+	}
+
 	err = writeHandshakeMessage(seeder.connectionTCP, seeder.InfoHash, seeder.MyPeerId)
 	if err != nil {
 		return nil, err
@@ -125,50 +131,18 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte, incoming chan Messag
 		return nil, err
 	}
 
+	// if handshake done clear deadline
+	err = seeder.connectionTCP.SetDeadline(time.Time{})
+	if err != nil {
+		return nil, err
+	}
+
 	go seeder.readRoutine()
 	go seeder.writeRoutine()
 
 	return seeder, nil
 
 }
-
-//
-//func (s *Seeder) SendHandshakeMessage() (err error) {
-//
-//	fmt.Printf("connect to %s\n", s.NetAddress.String())
-//
-//	s.connectionTCP, err = net.Dial(s.NetAddress.Network(), s.NetAddress.String())
-//	if err != nil {
-//		return err
-//	}
-//
-//	fmt.Printf("send to %s\n", s.NetAddress.String())
-//
-//	message := makeHandshakeMessage(s.InfoHash, s.MyPeerId)
-//	_, err = s.connectionTCP.Write(message)
-//	if err != nil {
-//		return err
-//	}
-//
-//	return nil
-//
-//}
-//
-//func makeHandshakeMessage(infoHash []byte, peerId []byte) (message []byte) {
-//
-//	protocolString := protocolId
-//
-//	message = make([]byte, 49+19)
-//
-//	message[0] = 19
-//	copy(message[1:20], []byte(protocolString))
-//	copy(message[28:48], infoHash)
-//	copy(message[48:68], peerId)
-//
-//	binary.BigEndian.PutUint64(message[20:28], 0)
-//
-//	return message
-//}
 
 func writeHandshakeMessage(w io.Writer, infoHash []byte, peerId []byte) (err error) {
 
@@ -190,37 +164,6 @@ func writeHandshakeMessage(w io.Writer, infoHash []byte, peerId []byte) (err err
 
 	return nil
 }
-
-//func parseHandshakeMessage(message []byte, expectedInfoHash []byte) (peerId []byte, err error) {
-//
-//	fmt.Println(len(message))
-//
-//	if len(message) < 49 {
-//		return nil,
-//			fmt.Errorf("parse handshake message:"+
-//				" byte slice has length %d < 49", len(message))
-//	}
-//
-//	stringLength := message[0]
-//	protocolString := string(message[1 : 1+stringLength])
-//
-//	//_ := binary.BigEndian.Uint64(message[1+stringLength:9+stringLength])
-//
-//	infoHash := message[9+stringLength : 29+stringLength]
-//
-//	if bytes.Compare(expectedInfoHash, infoHash) != 0 {
-//		return nil, fmt.Errorf("parse handshake message:" +
-//			" info hash doesn't match")
-//	}
-//
-//	peerId = message[29+stringLength : 49+stringLength]
-//
-//	log.Printf("Handshake received: protocol %s, peer id = %v, info hash = %v",
-//		protocolString, peerId, infoHash)
-//
-//	return peerId, nil
-//
-//}
 
 func readHandshakeMessage(r io.Reader, expectedInfoHash []byte) (peerId []byte, err error) {
 
