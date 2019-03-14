@@ -75,8 +75,8 @@ type Download struct {
 	seedersMap map[string]*Seeder
 	mapMutex   sync.RWMutex
 
-	incomingMessages  chan Message
-	outcomingMessages chan Message
+	messages chan Message
+	errors   chan error
 
 	lastPiece         int
 	lastBlock         int
@@ -212,6 +212,59 @@ func (d *Download) requestNextPiece(seeder *Seeder) {
 
 }
 
+func (d *Download) handleMessage(message *Message) {
+
+	seeder, _ := d.getSeeder(message.PeerId)
+
+	switch message.Id {
+
+	case Error:
+		d.deleteSeeder(message.PeerId)
+
+	case Bitfield:
+		seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.Metadata.Info.PieceCount))
+		d.updateInterested()
+
+	case Have:
+		pieceIndex, err := parseHavePayload(message.Payload)
+		if err != nil {
+			panic(err)
+		}
+		if seeder.PeerBitfield != nil {
+			seeder.PeerBitfield.Set(uint(pieceIndex))
+			d.updateInterested()
+		}
+
+	case Choke:
+		seeder.PeerChoking = true
+
+	case Unchoke:
+		seeder.PeerChoking = false
+		d.requestNextPiece(seeder)
+
+	case Interested:
+		seeder.PeerInterested = true
+		if true { // todo condition
+			seeder.AmChoking = false
+			seeder.outcoming <- Message{Unchoke, nil, d.PeerId}
+		}
+	case NotInterested:
+		seeder.PeerInterested = false
+		seeder.AmChoking = true
+		seeder.outcoming <- Message{Choke, nil, d.PeerId}
+
+	case Request:
+		if seeder.AmChoking == false {
+			//todo
+		}
+
+	case Piece:
+		//todo
+		d.requestNextPiece(seeder)
+
+	}
+}
+
 func (d *Download) handleRoutine() {
 
 	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
@@ -221,61 +274,12 @@ func (d *Download) handleRoutine() {
 
 	for {
 		select {
-		case message := <-d.incomingMessages:
-
-			//log.Printf("Recieved message: id = %d, peer_id = %v, payload = %v",
-			//	message.Id, message.PeerId, message.Payload)
-
-			seeder, _ := d.getSeeder(message.PeerId)
-
-			switch message.Id {
-
-			case Error:
-				d.deleteSeeder(message.PeerId)
-
-			case Bitfield:
-				log.Println("Bitfield created", seeder.PeerId)
-				seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.Metadata.Info.PieceCount))
-				d.updateInterested()
-
-			case Have:
-				pieceIndex, err := parseHavePayload(message.Payload)
-				if err != nil {
-					panic(err)
-				}
-				if seeder.PeerBitfield != nil {
-					seeder.PeerBitfield.Set(uint(pieceIndex))
-					d.updateInterested()
-				}
-
-			case Choke:
-				seeder.PeerChoking = true
-
-			case Unchoke:
-				seeder.PeerChoking = false
-				d.requestNextPiece(seeder)
-
-			case Interested:
-				seeder.PeerInterested = true
-
-			case NotInterested:
-				seeder.PeerInterested = false
-
-			//case Request:
-			//	//todo
-			//
-			case Piece:
-				//todo
-				d.requestNextPiece(seeder)
-
-			}
-
+		case message := <-d.messages:
+			d.handleMessage(&message)
 		default:
 			continue
 
 		}
-
-		//d.manageRoutine()
 
 	}
 
@@ -288,7 +292,7 @@ func (d *Download) Start() {
 	for i := range d.TrackerConnection.Seeders {
 		log.Printf(d.TrackerConnection.Seeders[i])
 		s, err := NewSeeder(d.TrackerConnection.Seeders[i],
-			d.Metadata.Info.HashSHA1, d.PeerId, d.incomingMessages)
+			d.Metadata.Info.HashSHA1, d.PeerId, d.messages)
 		if err != nil {
 			log.Println(err)
 		} else {
@@ -387,7 +391,7 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	}
 
 	download.seedersMap = make(map[string]*Seeder)
-	download.incomingMessages = make(chan Message, 32)
+	download.messages = make(chan Message, 32)
 
 	download.StartedTasks = make([]Task, 0)
 	download.FailedTasks = make([]Task, 0)
