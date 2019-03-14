@@ -3,6 +3,7 @@ package torrent
 import (
 	"crypto/rand"
 	"github.com/lezhenin/gotorrentclient/bitfield"
+	"github.com/lezhenin/gotorrentclient/fileoverlay"
 	"log"
 	"os"
 	"path"
@@ -48,8 +49,29 @@ func (s *State) GetLeftByteCount() uint64 {
 }
 
 type Task struct {
+	PieceIndex uint
 	BlockIndex uint
 	PeerId     []byte
+}
+
+type PieceStatus struct {
+	pieceIndex       int
+	leftBlocks       []int
+	downloadedBlocks []int
+	interestingPeers []string
+}
+
+func NewPieceStatus(index, blocksPerPiece int) (p *PieceStatus) {
+
+	p = new(PieceStatus)
+	p.pieceIndex = index
+	p.leftBlocks = make([]int, blocksPerPiece)
+	for i := 0; i < blocksPerPiece; i++ {
+		p.leftBlocks[i] = i
+	}
+
+	return p
+
 }
 
 type Download struct {
@@ -63,12 +85,13 @@ type Download struct {
 	DownloadPath      string
 	Files             []*os.File
 	TrackerConnection *Connection
+	Overlay           fileoverlay.FileOverlay
 
 	PieceBitfield *bitfield.Bitfield
 	BlockBitfield *bitfield.Bitfield
 
-	StartedTasks []Task
-	FailedTasks  []Task
+	startedTasks []Task
+	failedTasks  []Task
 
 	pieceLeft []uint
 
@@ -78,10 +101,16 @@ type Download struct {
 	messages chan Message
 	errors   chan error
 
-	lastPiece         int
-	lastBlock         int
+	lastDownloadedPiece int
+	lastRequestedPiece  int
+	lastRequestedBlock  int
+
+	pieces []*PieceStatus
+
 	interestedPeerIds [][]byte
 	stop              bool
+
+	blocksPerPiece int
 }
 
 func (d *Download) getSeeder(peerId []byte) (seeder *Seeder, ok bool) {
@@ -129,13 +158,13 @@ func (d *Download) manageRoutine() {
 
 		blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
 
-		if int64(d.lastBlock) == blocksPerPiece {
-			d.lastPiece += 1
-			d.lastBlock = 0
+		if int64(d.lastRequestedBlock) == blocksPerPiece {
+			d.lastRequestedPiece += 1
+			d.lastRequestedBlock = 0
 		}
 
-		pieceIndex := d.lastPiece
-		blockIndex := d.lastBlock
+		pieceIndex := d.lastRequestedPiece
+		blockIndex := d.lastRequestedBlock
 
 		if int64(pieceIndex) == 100 {
 			return
@@ -167,7 +196,7 @@ func (d *Download) manageRoutine() {
 					makeRequestPayload(uint32(pieceIndex),
 						uint32(blocksPerPiece*int64(blockIndex)),
 						uint32(blockLength)), d.PeerId}
-				d.lastBlock += 1
+				d.lastRequestedBlock += 1
 			}
 		}
 
@@ -179,19 +208,49 @@ func (d *Download) manageRoutine() {
 
 }
 
-func (d *Download) updateInterested() {
-	seeders := d.getSeederSlice()
-	for _, seeder := range seeders {
-		if seeder.PeerBitfield != nil && seeder.PeerBitfield.Get(uint(d.lastPiece)) == 1 {
-			if seeder.AmInterested == false {
-				seeder.AmInterested = true
-				seeder.outcoming <- Message{Interested, nil, d.PeerId}
+func (d *Download) initDownload() {
+
+	d.lastRequestedPiece = 0
+	d.lastDownloadedPiece = -1
+
+	d.pieces = append(d.pieces, NewPieceStatus(d.lastRequestedPiece, d.blocksPerPiece))
+	for _, s := range d.getSeederSlice() {
+		d.updateSeederInterested(s)
+	}
+}
+
+func (d *Download) updateSeederInterested(s *Seeder) {
+
+	id := string(s.PeerId)
+	interested := false
+
+	for _, p := range d.pieces {
+
+		contains := false
+		for _, ip := range p.interestingPeers {
+			if ip == id {
+				contains = true
+				interested = true
+				break
 			}
-		} else if seeder.AmInterested == true {
-			seeder.AmInterested = false
-			seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
+		}
+
+		if !contains && s.PeerBitfield != nil && s.PeerBitfield.Get(uint(p.pieceIndex)) == 1 {
+			p.interestingPeers = append(p.interestingPeers, id)
+			interested = true
 		}
 	}
+
+	if interested == true && s.AmInterested == false {
+		s.AmInterested = true
+		s.outcoming <- Message{Interested, nil, d.PeerId}
+	}
+
+	if interested == false && s.AmInterested == true {
+		s.AmInterested = false
+		s.outcoming <- Message{NotInterested, nil, d.PeerId}
+	}
+
 }
 
 func (d *Download) requestNextPiece(seeder *Seeder) {
@@ -199,20 +258,24 @@ func (d *Download) requestNextPiece(seeder *Seeder) {
 	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
 	if seeder.AmInterested {
 		seeder.outcoming <- Message{Request,
-			makeRequestPayload(uint32(d.lastPiece),
-				uint32(blocksPerPiece*int64(d.lastBlock)),
+			makeRequestPayload(uint32(d.lastRequestedPiece),
+				uint32(blocksPerPiece*int64(d.lastRequestedBlock)),
 				uint32(blockLength)), d.PeerId}
-		d.lastBlock += 1
+		d.lastRequestedBlock += 1
 	}
-	if int64(d.lastBlock) == blocksPerPiece {
-		d.lastBlock = 0
-		d.lastPiece += 1
-		d.updateInterested()
+	if int64(d.lastRequestedBlock) == blocksPerPiece {
+		d.lastRequestedBlock = 0
+		d.lastRequestedPiece += 1
+		for _, s := range d.getSeederSlice() {
+			d.updateSeederInterested(s)
+		}
 	}
 
 }
 
 func (d *Download) handleMessage(message *Message) {
+
+	log.Println("HANDLE", message.Id)
 
 	seeder, _ := d.getSeeder(message.PeerId)
 
@@ -223,7 +286,7 @@ func (d *Download) handleMessage(message *Message) {
 
 	case Bitfield:
 		seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.Metadata.Info.PieceCount))
-		d.updateInterested()
+		d.updateSeederInterested(seeder)
 
 	case Have:
 		pieceIndex, err := parseHavePayload(message.Payload)
@@ -232,7 +295,7 @@ func (d *Download) handleMessage(message *Message) {
 		}
 		if seeder.PeerBitfield != nil {
 			seeder.PeerBitfield.Set(uint(pieceIndex))
-			d.updateInterested()
+			d.updateSeederInterested(seeder)
 		}
 
 	case Choke:
@@ -266,6 +329,8 @@ func (d *Download) handleMessage(message *Message) {
 }
 
 func (d *Download) handleRoutine() {
+
+	d.initDownload()
 
 	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
 
@@ -393,8 +458,10 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	download.seedersMap = make(map[string]*Seeder)
 	download.messages = make(chan Message, 32)
 
-	download.StartedTasks = make([]Task, 0)
-	download.FailedTasks = make([]Task, 0)
+	download.startedTasks = make([]Task, 0)
+	download.failedTasks = make([]Task, 0)
+
+	download.blocksPerPiece = int(download.Metadata.Info.PieceLength / int64(blockLength))
 
 	blocksPerPiece := download.Metadata.Info.PieceLength / int64(blockLength)
 	download.BlockBitfield = bitfield.NewBitfield(uint(download.Metadata.Info.PieceCount) * uint(blocksPerPiece))
