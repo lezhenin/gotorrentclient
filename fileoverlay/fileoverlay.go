@@ -2,187 +2,155 @@ package fileoverlay
 
 import (
 	"fmt"
-	"github.com/lezhenin/gotorrentclient/bitfield"
 	"os"
-	"path"
 )
 
-type FileInfo struct {
-	file   *os.File
-	path   string
-	length uint32
-}
-
-type PieceInfo struct {
-	length uint32
-}
-
 type FileOverlay struct {
-	files       []FileInfo
-	pieces      []PieceInfo
-	totalLength uint32
-
-	pieceBitField bitfield.Bitfield
+	files     []*os.File
+	fileInfos []os.FileInfo
+	totalSize int64
 }
 
-func NewFileOverlay(pieceLength, pieceCount uint32, fileLengths []uint32, filePaths []string) (fo *FileOverlay, err error) {
-
-	if len(fileLengths) != len(filePaths) {
-		panic("new file overlay: file length slice and file path slice have different length")
-	}
+func NewFileOverlay(files []*os.File) (fo *FileOverlay, err error) {
 
 	fo = new(FileOverlay)
-	fo.totalLength = uint32(0)
 
-	// todo reopen instead creation
-	for i := range filePaths {
-		_ = os.Mkdir(path.Dir(filePaths[i]), 0755)
+	fo.files = files
+	fo.fileInfos = make([]os.FileInfo, len(files))
 
-		file, err := os.Create(filePaths[i])
+	fo.totalSize = int64(0)
+
+	for index, file := range files {
+
+		fileInfo, err := file.Stat()
+		fo.fileInfos[index] = fileInfo
+
 		if err != nil {
 			return nil, err
 		}
 
-		err = file.Truncate(int64(fileLengths[i]))
-		if err != nil {
-			return nil, err
-		}
+		fo.totalSize += fileInfo.Size()
 
-		fo.files = append(fo.files, FileInfo{file, filePaths[i], fileLengths[i]})
-		fo.totalLength += fileLengths[i]
-	}
+		// todo check permissions
+		//fi.Mode()
 
-	for i := uint32(0); i < pieceCount; i++ {
-		fo.pieces = append(fo.pieces, PieceInfo{pieceLength})
-	}
-
-	if fo.totalLength > pieceCount*pieceLength {
-		panic("new file overlay: total length > piece count * piece length")
 	}
 
 	return fo, nil
 }
 
-func (fo *FileOverlay) Read(pieceIndex, start, length uint32) (n uint32, data []byte, err error) {
+func (fo *FileOverlay) ReadAt(b []byte, off int64) (n int, err error) {
 
-	data = make([]byte, length)
+	fileOffset, firstFileIndex, fileCount := fo.convertToFileOffset(off, int64(len(b)))
 
-	offset, firstFileIndex, fileCount :=
-		fo.convertToFileOffset(pieceIndex, start, length)
+	leftBytes := int64(len(b))
+	readBytes := int64(0)
 
-	leftBytes := length
-	readBytes := uint32(0)
-	currentOffset := int64(offset)
+	currentOffset := int64(fileOffset)
 	nextOffset := int64(0)
-	blockLength := uint32(0)
+
+	blockSize := int64(0)
 
 	for i := firstFileIndex; i < firstFileIndex+fileCount; i++ {
 
-		fileInfo := fo.files[i]
+		fileInfo := fo.fileInfos[i]
 
-		if leftBytes < fileInfo.length {
-			blockLength = leftBytes
+		if leftBytes < fileInfo.Size() {
+			blockSize = leftBytes
 		} else {
-			blockLength = fileInfo.length
+			blockSize = fileInfo.Size()
 			nextOffset = 0
 		}
 
-		n, err := fileInfo.file.ReadAt(data[readBytes:readBytes+blockLength], currentOffset)
-
-		if err != nil {
-			return 0, nil, err
-		}
-
-		if uint32(n) != blockLength {
-			return 0, nil, fmt.Errorf("read: block length != n")
-		}
-
-		readBytes += blockLength
-		leftBytes -= blockLength
-
-		currentOffset = nextOffset
-
-	}
-
-	if leftBytes != 0 || readBytes != length {
-		return 0, nil, fmt.Errorf("read: left bytes != 0 or read bytes != length")
-	}
-
-	return readBytes, data, err
-
-}
-
-func (fo *FileOverlay) Write(pieceIndex, start uint32, data []byte) (n uint32, err error) {
-
-	offset, firstFileIndex, fileCount :=
-		fo.convertToFileOffset(pieceIndex, start, uint32(len(data)))
-
-	leftBytes := uint32(len(data))
-	wroteBytes := uint32(0)
-	currentOffset := int64(offset)
-	nextOffset := int64(0)
-	blockLength := uint32(0)
-
-	for i := firstFileIndex; i < firstFileIndex+fileCount; i++ {
-
-		fileInfo := fo.files[i]
-
-		if leftBytes < fileInfo.length {
-			blockLength = leftBytes
-		} else {
-			blockLength = fileInfo.length
-			nextOffset = 0
-		}
-
-		n, err := fileInfo.file.WriteAt(data[wroteBytes:wroteBytes+blockLength], currentOffset)
+		n, err := fo.files[i].ReadAt(b[readBytes:readBytes+blockSize], currentOffset)
 
 		if err != nil {
 			return 0, err
 		}
 
-		if uint32(n) != blockLength {
-			return 0, fmt.Errorf("write: block length != n")
+		if int64(n) != blockSize {
+			return 0, fmt.Errorf("read: block length != n")
 		}
 
-		wroteBytes += blockLength
-		leftBytes -= blockLength
+		readBytes += blockSize
+		leftBytes -= blockSize
 
 		currentOffset = nextOffset
 
 	}
 
-	if leftBytes != 0 || wroteBytes != uint32(len(data)) {
+	if leftBytes != 0 || readBytes != int64(len(b)) {
+		return 0, fmt.Errorf("read: left bytes != 0 or read bytes != length")
+	}
+
+	return int(readBytes), nil
+
+}
+
+func (fo *FileOverlay) WriteAt(b []byte, off int64) (n int, err error) {
+
+	fileOffset, firstFileIndex, fileCount := fo.convertToFileOffset(off, int64(len(b)))
+
+	leftBytes := int64(len(b))
+	wroteBytes := int64(0)
+	currentOffset := int64(fileOffset)
+	nextOffset := int64(0)
+	blockSize := int64(0)
+
+	for i := firstFileIndex; i < firstFileIndex+fileCount; i++ {
+
+		fileInfo := fo.fileInfos[i]
+
+		if leftBytes < fileInfo.Size() {
+			blockSize = leftBytes
+		} else {
+			blockSize = fileInfo.Size()
+			nextOffset = 0
+		}
+
+		n, err := fo.files[i].WriteAt(b[wroteBytes:wroteBytes+blockSize], currentOffset)
+
+		if err != nil {
+			return 0, err
+		}
+
+		if int64(n) != blockSize {
+			return 0, fmt.Errorf("write: block length != n")
+		}
+
+		wroteBytes += blockSize
+		leftBytes -= blockSize
+
+		currentOffset = nextOffset
+
+	}
+
+	if leftBytes != 0 || wroteBytes != int64(len(b)) {
 		return 0, fmt.Errorf("write: left bytes != 0 or read bytes != length")
 	}
 
-	return wroteBytes, nil
+	return int(wroteBytes), nil
 }
 
-func (fo *FileOverlay) convertToFileOffset(
-	pieceIndex, start, length uint32) (
-	offset uint32, firstFileIndex, fileCount int) {
+func (fo *FileOverlay) convertToFileOffset(offset, length int64) (fileOffset int64, firstFileIndex, fileCount int) {
 
-	offset = start
+	fileOffset = offset
 	fileCount = 1
 
-	for i := uint32(0); i < pieceIndex; i++ {
-		offset += fo.pieces[i].length
-	}
-
-	for i := 0; i < len(fo.files); i++ {
-		if offset < fo.files[i].length {
-			firstFileIndex = i
+	for index, fileInfo := range fo.fileInfos {
+		if fileOffset < fileInfo.Size() {
+			firstFileIndex = index
 			break
 		}
-		offset -= fo.files[i].length
+		fileOffset -= fileInfo.Size()
 	}
 
-	fileCapacity := fo.files[firstFileIndex].length
+	fileSize := fo.fileInfos[firstFileIndex].Size()
 
-	for offset+length > fileCapacity {
+	for fileOffset+length > fileSize {
 		fileCount += 1
-		fileCapacity += fo.files[firstFileIndex+fileCount-1].length
+		fileSize += fo.fileInfos[firstFileIndex+fileCount-1].Size()
 	}
-	return offset, firstFileIndex, fileCount
+	return fileOffset, firstFileIndex, fileCount
 
 }
