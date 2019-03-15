@@ -64,7 +64,7 @@ type Seeder struct {
 	outcoming chan Message
 }
 
-func (s *Seeder) accept(connection net.Conn) (err error) {
+func (s *Seeder) Accept(connection net.Conn) (err error) {
 
 	s.connection = connection
 
@@ -159,6 +159,13 @@ func (s *Seeder) writeRoutine() {
 			return
 		}
 	}
+}
+
+func (s *Seeder) Close() {
+
+	close(s.outcoming)
+	_ = s.connection.Close()
+
 }
 
 func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
@@ -313,7 +320,7 @@ func parsePiecePayload(payload []byte) (pieceIndex uint32, begin uint32, block [
 	pieceIndex = binary.BigEndian.Uint32(payload[0:4])
 	begin = binary.BigEndian.Uint32(payload[4:8])
 
-	copy(block, payload[8:])
+	block = payload[8:]
 
 	return pieceIndex, begin, block, nil
 }
