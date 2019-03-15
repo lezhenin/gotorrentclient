@@ -5,6 +5,7 @@ import (
 	"github.com/lezhenin/gotorrentclient/bitfield"
 	"github.com/lezhenin/gotorrentclient/fileoverlay"
 	"log"
+	"net"
 	"os"
 	"path"
 	"sync"
@@ -356,13 +357,32 @@ func (d *Download) Start() {
 
 	for i := range d.TrackerConnection.Seeders {
 		log.Printf(d.TrackerConnection.Seeders[i])
-		s, err := NewSeeder(d.TrackerConnection.Seeders[i],
-			d.Metadata.Info.HashSHA1, d.PeerId, d.messages)
+
+		addr, err := net.ResolveTCPAddr("tcp", d.TrackerConnection.Seeders[i])
 		if err != nil {
 			log.Println(err)
-		} else {
-			d.addSeeder(s)
+			continue
 		}
+
+		conn, err := net.DialTimeout(addr.Network(), addr.String(), time.Second)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		s, err := NewSeeder(d.Metadata.Info.HashSHA1, d.PeerId, d.messages)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		err = s.Init(conn)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		d.addSeeder(s)
 	}
 
 	go d.handleRoutine()

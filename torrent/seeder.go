@@ -13,6 +13,8 @@ import (
 
 const protocolId string = "BitTorrent protocol"
 
+const handshakeTimeout = 15
+
 const bufferSize = blockLength + 512
 const messageBufferLength = 16
 
@@ -55,17 +57,88 @@ type Seeder struct {
 	MyPeerId []byte
 	InfoHash []byte
 
-	connectionTCP net.Conn
-	buffer        []byte
+	connection net.Conn
+	buffer     []byte
 
 	incoming  chan Message
 	outcoming chan Message
 }
 
+func (s *Seeder) accept(connection net.Conn) (err error) {
+
+	s.connection = connection
+
+	// set deadline 15 second for handshake
+	err = s.connection.SetDeadline(time.Now().Add(handshakeTimeout * time.Second))
+	if err != nil {
+		return err
+	}
+
+	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
+	if err != nil {
+		return err
+	}
+
+	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
+	if err != nil {
+		return err
+	}
+
+	// if handshake done clear deadline
+	err = s.connection.SetDeadline(time.Time{})
+	if err != nil {
+		return err
+	}
+
+	s.run()
+
+	return nil
+
+}
+
+func (s *Seeder) Init(connection net.Conn) (err error) {
+
+	s.connection = connection
+
+	// set deadline 15 second for handshake
+	err = s.connection.SetDeadline(time.Now().Add(handshakeTimeout * time.Second))
+	if err != nil {
+		return err
+	}
+
+	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
+	if err != nil {
+		return err
+	}
+
+	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
+	if err != nil {
+		return err
+	}
+
+	// if handshake done clear deadline
+	err = s.connection.SetDeadline(time.Time{})
+	if err != nil {
+		return err
+	}
+
+	s.run()
+
+	return nil
+
+}
+
+func (s *Seeder) run() {
+
+	go s.readRoutine()
+	go s.writeRoutine()
+
+}
+
 func (s *Seeder) readRoutine() {
 
 	for {
-		id, payload, err := readMessage(s.connectionTCP)
+		id, payload, err := readMessage(s.connection)
 		if err != nil {
 			log.Println(err)
 			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
@@ -79,7 +152,7 @@ func (s *Seeder) writeRoutine() {
 
 	for {
 		message := <-s.outcoming
-		err := writeMessage(s.connectionTCP, message.Id, message.Payload)
+		err := writeMessage(s.connection, message.Id, message.Payload)
 		if err != nil {
 			log.Println(err)
 			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
@@ -88,13 +161,9 @@ func (s *Seeder) writeRoutine() {
 	}
 }
 
-func NewSeeder(addr string, infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
+func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
 
 	seeder = new(Seeder)
-	seeder.NetAddress, err = net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
 
 	seeder.AmChoking = true
 	seeder.PeerChoking = true
@@ -109,36 +178,6 @@ func NewSeeder(addr string, infoHash []byte, peerId []byte, incoming chan Messag
 
 	seeder.incoming = incoming
 	seeder.outcoming = make(chan Message, messageBufferLength)
-
-	seeder.connectionTCP, err = net.DialTimeout(seeder.NetAddress.Network(), seeder.NetAddress.String(), time.Second)
-	if err != nil {
-		return nil, err
-	}
-
-	// set deadline 15 second for handshake
-	err = seeder.connectionTCP.SetDeadline(time.Now().Add(15 * time.Second))
-	if err != nil {
-		return nil, err
-	}
-
-	err = writeHandshakeMessage(seeder.connectionTCP, seeder.InfoHash, seeder.MyPeerId)
-	if err != nil {
-		return nil, err
-	}
-
-	seeder.PeerId, err = readHandshakeMessage(seeder.connectionTCP, seeder.InfoHash)
-	if err != nil {
-		return nil, err
-	}
-
-	// if handshake done clear deadline
-	err = seeder.connectionTCP.SetDeadline(time.Time{})
-	if err != nil {
-		return nil, err
-	}
-
-	go seeder.readRoutine()
-	go seeder.writeRoutine()
 
 	return seeder, nil
 
