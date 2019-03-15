@@ -1,7 +1,10 @@
 package torrent
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha1"
+	"fmt"
 	"github.com/lezhenin/gotorrentclient/bitfield"
 	"github.com/lezhenin/gotorrentclient/fileoverlay"
 	"log"
@@ -72,8 +75,22 @@ func NewPieceStatus(index, blocksPerPiece int) (p *PieceStatus) {
 	}
 
 	return p
-
 }
+
+//func (p *PieceStatus) updateInterestedPeers(seeders []*Seeder) {
+//	for _, seeder := range seeders {
+//		if seeder.PeerBitfield != nil && seeder.PeerBitfield.Get(uint(p.pieceIndex)) == 1 {
+//			if
+//		}
+//	}
+//
+//}
+//
+//func (p *PieceStatus) isInterested(s *Seeder) {
+//
+//
+//}
+//
 
 type Download struct {
 	Metadata          Metadata
@@ -86,7 +103,7 @@ type Download struct {
 	DownloadPath      string
 	Files             []*os.File
 	TrackerConnection *Connection
-	Overlay           fileoverlay.FileOverlay
+	Overlay           *fileoverlay.FileOverlay
 
 	PieceBitfield *bitfield.Bitfield
 	BlockBitfield *bitfield.Bitfield
@@ -143,72 +160,6 @@ func (d *Download) getSeederSlice() (seeders []*Seeder) {
 	return seeders
 }
 
-func (d *Download) sendRoutine() {
-
-}
-
-func (d *Download) manageRoutine() {
-
-	if d.stop {
-		return
-	}
-
-	interestedSeeders := []*Seeder{}
-
-	for {
-
-		blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
-
-		if int64(d.lastRequestedBlock) == blocksPerPiece {
-			d.lastRequestedPiece += 1
-			d.lastRequestedBlock = 0
-		}
-
-		pieceIndex := d.lastRequestedPiece
-		blockIndex := d.lastRequestedBlock
-
-		if int64(pieceIndex) == 100 {
-			return
-		}
-
-		seeders := d.getSeederSlice()
-		for _, seeder := range seeders {
-			log.Println("Bitfield accessed", seeder.PeerId)
-			if seeder.PeerBitfield != nil && seeder.PeerBitfield.Get(uint(pieceIndex)) == 1 {
-				interestedSeeders = append(interestedSeeders, seeder)
-			} else if seeder.AmInterested {
-				seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
-			}
-		}
-
-		for _, seeder := range interestedSeeders {
-			//if seeder.AmChoking == true {
-			//	seeder.outcoming <- Message{Unchoke, nil, d.PeerId}
-			//	seeder.AmChoking = false
-			//}
-			if seeder.AmInterested == false {
-				log.Println("int")
-				seeder.outcoming <- Message{Interested, nil, d.PeerId}
-				seeder.AmInterested = true
-			}
-			if seeder.PeerChoking == false {
-				log.Println("req")
-				seeder.outcoming <- Message{Request,
-					makeRequestPayload(uint32(pieceIndex),
-						uint32(blocksPerPiece*int64(blockIndex)),
-						uint32(blockLength)), d.PeerId}
-				d.lastRequestedBlock += 1
-			}
-		}
-
-		//d.stop = true
-
-		break
-
-	}
-
-}
-
 func (d *Download) initDownload() {
 
 	d.lastRequestedPiece = 0
@@ -218,6 +169,25 @@ func (d *Download) initDownload() {
 	for _, s := range d.getSeederSlice() {
 		d.updateSeederInterested(s)
 	}
+}
+
+func (d *Download) getPiece(pieceIndex int) (index int, piece *PieceStatus) {
+	for index, piece := range d.pieces {
+		if piece.pieceIndex == pieceIndex {
+			return index, piece
+		}
+	}
+
+	return -1, nil
+}
+
+func checkInterest(s *Seeder, p *PieceStatus) (interested bool) {
+	for _, peerId := range p.interestingPeers {
+		if peerId == string(s.PeerId) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Download) updateSeederInterested(s *Seeder) {
@@ -254,31 +224,121 @@ func (d *Download) updateSeederInterested(s *Seeder) {
 
 }
 
-func (d *Download) requestNextPiece(seeder *Seeder) {
+func (d *Download) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, stillInterested bool) {
 
-	blocksPerPiece := d.Metadata.Info.PieceLength / int64(blockLength)
-	if seeder.AmInterested {
-		seeder.outcoming <- Message{Request,
-			makeRequestPayload(uint32(d.lastRequestedPiece),
-				uint32(blocksPerPiece*int64(d.lastRequestedBlock)),
-				uint32(blockLength)), d.PeerId}
-		d.lastRequestedBlock += 1
-	}
-	if int64(d.lastRequestedBlock) == blocksPerPiece {
-		d.lastRequestedBlock = 0
-		d.lastRequestedPiece += 1
-		for _, s := range d.getSeederSlice() {
-			d.updateSeederInterested(s)
+	var piece *PieceStatus
+	piece = nil
+	for _, p := range d.pieces {
+		if len(p.leftBlocks) > 0 && checkInterest(seeder, p) {
+			piece = p
+			break
 		}
 	}
 
+	if piece != nil {
+
+		pieceIndex = piece.pieceIndex
+		blockIndex = piece.leftBlocks[0]
+		piece.leftBlocks = piece.leftBlocks[1:]
+
+		log.Printf("Request block %d of piece %d", blockIndex, pieceIndex)
+
+		return pieceIndex, blockIndex, true
+
+	} else if !d.stop {
+
+		log.Printf("NON STOP")
+
+		d.lastRequestedPiece += 1
+		nextPieceIndex := d.lastRequestedPiece
+
+		if int64(nextPieceIndex) < d.Metadata.Info.PieceCount {
+
+			piece = NewPieceStatus(nextPieceIndex, d.blocksPerPiece)
+			d.pieces = append(d.pieces, piece)
+			for _, s := range d.getSeederSlice() {
+				d.updateSeederInterested(s)
+			}
+
+			if checkInterest(seeder, piece) {
+
+				pieceIndex = piece.pieceIndex
+				blockIndex = piece.leftBlocks[0]
+				piece.leftBlocks = piece.leftBlocks[1:]
+
+				log.Printf("Request block %d of piece %d", blockIndex, pieceIndex)
+
+				return pieceIndex, blockIndex, true
+
+			}
+		} else {
+			log.Printf("STOP")
+			d.stop = true
+		}
+	}
+
+	return 0, 0, false
+
+}
+
+func (d *Download) acceptPiece(pieceIndex, blockIndex int, data []byte) {
+
+	log.Printf("Accept block %d of piece %d", blockIndex, pieceIndex)
+
+	index, piece := d.getPiece(int(pieceIndex))
+	if piece == nil {
+		panic("piece not found")
+	}
+
+	piece.downloadedBlocks = append(piece.downloadedBlocks, blockIndex)
+
+	pieceLength := d.Metadata.Info.PieceLength
+	offset := int64(pieceIndex)*pieceLength + int64(blockIndex*blockLength)
+	n, err := d.Overlay.WriteAt(data, offset)
+	if n != len(data) || err != nil {
+		panic(err)
+	}
+
+	if len(piece.downloadedBlocks) == d.blocksPerPiece {
+		log.Printf("Accept piece %d", pieceIndex)
+
+		pieceData := make([]byte, pieceLength)
+		n, err = d.Overlay.ReadAt(pieceData, pieceLength*int64(pieceIndex))
+		if err != nil {
+			panic(err)
+		}
+
+		hashSum := d.Metadata.Info.Pieces[pieceIndex*20 : pieceIndex*20+20]
+
+		hash := sha1.New()
+		hash.Write(pieceData)
+		sum := hash.Sum(nil)
+
+		if bytes.Compare(sum, hashSum) != 0 {
+			fmt.Println("Hashes are not math!")
+			//todo handle
+			piece.leftBlocks = piece.downloadedBlocks
+
+		} else {
+
+			log.Printf("UPDATE")
+			n := copy(d.pieces[index:], d.pieces[index+1:])
+			d.pieces = d.pieces[:index+n]
+
+		}
+	}
 }
 
 func (d *Download) handleMessage(message *Message) {
 
 	log.Println("HANDLE", message.Id)
 
-	seeder, _ := d.getSeeder(message.PeerId)
+	seeder, ok := d.getSeeder(message.PeerId)
+
+	if !ok {
+		log.Printf("Peer with id %v is not found. Ignore message.")
+		return
+	}
 
 	switch message.Id {
 
@@ -304,7 +364,11 @@ func (d *Download) handleMessage(message *Message) {
 
 	case Unchoke:
 		seeder.PeerChoking = false
-		d.requestNextPiece(seeder)
+
+		pieceIndex, blockIndex, _ := d.requestPiece(seeder)
+
+		payload := makeRequestPayload(uint32(pieceIndex), uint32(blockIndex*blockLength), uint32(blockLength))
+		seeder.outcoming <- Message{Request, payload, d.PeerId}
 
 	case Interested:
 		seeder.PeerInterested = true
@@ -324,7 +388,23 @@ func (d *Download) handleMessage(message *Message) {
 
 	case Piece:
 		//todo
-		d.requestNextPiece(seeder)
+
+		log.Printf("Piecet payload len %d", len(message.Payload))
+
+		index, offset, data, _ := parsePiecePayload(message.Payload) // todo err
+
+		pieceIndex := int(index)
+		blockIndex := int(offset) / blockLength
+
+		d.acceptPiece(pieceIndex, blockIndex, data)
+		pieceIndex, blockIndex, interested := d.requestPiece(seeder)
+
+		if interested {
+			payload := makeRequestPayload(uint32(pieceIndex), uint32(blockIndex*blockLength), uint32(blockLength))
+			seeder.outcoming <- Message{Request, payload, d.PeerId}
+		} else {
+			seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
+		}
 
 	}
 }
@@ -388,7 +468,7 @@ func (d *Download) Start() {
 	go d.handleRoutine()
 	//go d.manageRoutine()
 
-	time.Sleep(60 * time.Second)
+	time.Sleep(120 * time.Second)
 
 }
 
@@ -402,7 +482,7 @@ func (d *Download) IsFinished() {
 
 }
 
-func createFiles(d *Download) (err error) {
+func createFiles(d *Download) (files []*os.File, err error) {
 
 	basePath := d.DownloadPath
 
@@ -418,12 +498,12 @@ func createFiles(d *Download) (err error) {
 
 		file, err := os.Create(filePath)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		err = file.Truncate(fileInfo.Length)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		d.Files = append(d.Files, file)
@@ -432,7 +512,7 @@ func createFiles(d *Download) (err error) {
 			filePath, fileInfo.Length)
 	}
 
-	return nil
+	return d.Files, nil
 
 }
 
@@ -453,7 +533,8 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	download.DownloadPath = downloadPath
 	download.State.left = uint64(download.Metadata.Info.TotalLength)
 
-	err = createFiles(download)
+	files, err := createFiles(download)
+	download.Overlay, err = fileoverlay.NewFileOverlay(files)
 
 	if err != nil {
 		return nil, err
@@ -488,6 +569,7 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	download.PieceBitfield = bitfield.NewBitfield(uint(download.Metadata.Info.PieceCount))
 
 	log.Printf("Download was created successfully: peer id = %v", download.PeerId)
+	log.Println(download.blocksPerPiece)
 
 	return download, nil
 }
