@@ -55,10 +55,10 @@ func (fo *FileOverlay) ReadAt(b []byte, off int64) (n int, err error) {
 
 		fileInfo := fo.fileInfos[i]
 
-		if leftBytes < fileInfo.Size() {
+		if currentOffset+leftBytes < fileInfo.Size() {
 			blockSize = leftBytes
 		} else {
-			blockSize = fileInfo.Size()
+			blockSize = fileInfo.Size() - currentOffset
 			nextOffset = 0
 		}
 
