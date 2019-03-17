@@ -101,10 +101,10 @@ func (fo *FileOverlay) WriteAt(b []byte, off int64) (n int, err error) {
 
 		fileInfo := fo.fileInfos[i]
 
-		if leftBytes < fileInfo.Size() {
+		if currentOffset+leftBytes < fileInfo.Size() {
 			blockSize = leftBytes
 		} else {
-			blockSize = fileInfo.Size()
+			blockSize = fileInfo.Size() - currentOffset
 			nextOffset = 0
 		}
 
@@ -151,6 +151,7 @@ func (fo *FileOverlay) convertToFileOffset(offset, length int64) (fileOffset int
 		fileCount += 1
 		fileSize += fo.fileInfos[firstFileIndex+fileCount-1].Size()
 	}
+
 	return fileOffset, firstFileIndex, fileCount
 
 }

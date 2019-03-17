@@ -1,51 +1,145 @@
 package fileoverlay
 
-import "testing"
+import (
+	"bytes"
+	"io/ioutil"
+	"math/rand"
+	"os"
+	"testing"
+)
 
-var testFiles = []string{"/home/iurii/Documents/go/src/github.com/lezhenin/gotorrentclient/test/file1",
-	"/home/iurii/Documents/go/src/github.com/lezhenin/gotorrentclient/test/file2"}
-
-var fileLengths = []uint32{25 * 1024, 51 * 1024}
+const fileSize = 512
+const blockSize = 16
 
 func TestFileOverlay_Write(t *testing.T) {
 
-	//const testIndex = 29
-	//
-	//fo, err := NewFileOverlay(pieceSize, pieceCount, fileLengths, testFiles)
-	//if err != nil {
-	//	t.Error(err)
-	//}
-	//
-	//if fo.totalSize != fileLengths[0]+fileLengths[1] {
-	//	t.Error("w")
-	//}
-	//
-	//data := make([]byte, pieceSize-1*1024)
-	//
-	//for i := 0; i < len(data); i++ {
-	//	data[i] = 0x25
-	//}
-	//
-	//n, err := fo.Write(0, 512, data)
-	//
-	//if err != nil {
-	//	t.Error(err)
-	//}
-	//
-	//if int(n) != len(data) {
-	//	t.Error("w")
-	//}
-	//
-	//n, data, err = fo.Read(0, 511, uint32(len(data)))
-	//
-	//if data[0] != 0 {
-	//	t.Error("w")
-	//}
-	//
-	//for i := 1; i < len(data); i++ {
-	//	if data[i] != 0x25 {
-	//		t.Error("w", i)
-	//	}
-	//}
+	var files []*os.File
+
+	for i := 0; i < 3; i++ {
+
+		file, err := ioutil.TempFile("", "TestFileOverlay_Write")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err = file.Truncate(fileSize); err != nil {
+			t.Fatal(err)
+		}
+
+		files = append(files, file)
+	}
+
+	overlay, err := NewFileOverlay(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, blockSize)
+
+	testData := make([]byte, blockSize)
+	rand.Read(testData)
+
+	// first file write
+	n, err := overlay.WriteAt(testData, fileSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != blockSize {
+		t.Error()
+	}
+
+	_, err = files[0].ReadAt(data, fileSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Compare(data, testData) != 0 {
+		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
+	}
+
+	// second file write
+
+	rand.Read(testData)
+
+	n, err = overlay.WriteAt(testData, fileSize+fileSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != blockSize {
+		t.Error()
+	}
+
+	_, err = files[1].ReadAt(data, fileSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Compare(data, testData) != 0 {
+		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
+	}
+
+	// border write
+
+	rand.Read(testData)
+
+	n, err = overlay.WriteAt(testData, fileSize-blockSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != blockSize {
+		t.Error()
+	}
+
+	_, err = files[0].ReadAt(data[:blockSize/2], fileSize-blockSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = files[1].ReadAt(data[blockSize/2:], 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Compare(data, testData) != 0 {
+		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
+	}
+
+	// large block
+
+	data = make([]byte, fileSize+blockSize)
+
+	testData = make([]byte, fileSize+blockSize)
+	rand.Read(testData)
+
+	n, err = overlay.WriteAt(testData, fileSize-blockSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != fileSize+blockSize {
+		t.Error()
+	}
+
+	_, err = files[0].ReadAt(data[:blockSize/2], fileSize-blockSize/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = files[1].ReadAt(data[(blockSize/2):(fileSize+blockSize/2)], 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = files[2].ReadAt(data[(fileSize+blockSize/2):], 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Compare(data, testData) != 0 {
+		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
+	}
 
 }
