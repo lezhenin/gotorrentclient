@@ -1,6 +1,7 @@
 package bitfield
 
 import (
+	"crypto/rand"
 	"testing"
 )
 
@@ -73,6 +74,32 @@ func TestBitfield_Clear(t *testing.T) {
 
 }
 
+func TestBitfield_Count(t *testing.T) {
+
+	b := NewBitfield(bitfieldLength)
+
+	b.Set(2)
+
+	if b.Count(1) != 1 {
+		t.Error()
+	}
+
+	if b.Count(0) != bitfieldLength-1 {
+		t.Error()
+	}
+
+	b.Set(125)
+
+	if b.Count(1) != 2 {
+		t.Error()
+	}
+
+	if b.Count(0) != bitfieldLength-2 {
+		t.Error()
+	}
+
+}
+
 func TestBitfield_GetFirstIndex(t *testing.T) {
 
 	b := NewBitfield(bitfieldLength)
@@ -127,6 +154,20 @@ func TestAnd(t *testing.T) {
 		t.Error()
 	}
 
+}
+
+func BenchmarkBitfield_Count(b *testing.B) {
+
+	a := NewBitfield(8 * 1024 * 1024)
+	_, err := rand.Read(a.field)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for i := 0; i < b.N; i++ {
+		a.Count(0)
+		a.Count(1)
+	}
 }
 
 func BenchmarkBitfield_GetFirstIndex(b *testing.B) {

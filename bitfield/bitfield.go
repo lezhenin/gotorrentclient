@@ -1,6 +1,8 @@
 package bitfield
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const blockSize = 8
 
@@ -54,6 +56,42 @@ func (b *Bitfield) Length() uint {
 	return b.effectiveLength
 }
 
+func (b *Bitfield) Count(valueAt byte) uint {
+
+	testByteValue := uint8(0xFF)
+	if valueAt == 0 {
+		testByteValue = uint8(0x00)
+	}
+
+	testBitValue := uint8(0x80)
+	if valueAt == 0 {
+		testBitValue = uint8(0x00)
+	}
+
+	counter := uint(0)
+
+	byteIndex := uint(0)
+	bitIndex := uint(0)
+
+	for byteIndex < b.arrayLength {
+		if b.field[byteIndex] == testByteValue {
+			counter += blockSize
+		} else {
+			for bitIndex < blockSize {
+				if (b.field[byteIndex]<<bitIndex)&0x80 == testBitValue {
+					counter += 1
+				}
+				bitIndex += 1
+			}
+			bitIndex = 0
+		}
+		byteIndex += 1
+	}
+
+	return counter
+
+}
+
 func (b *Bitfield) GetIndices(valueAt byte) (indices []uint) {
 
 	indices = []uint{}
@@ -79,9 +117,9 @@ func (b *Bitfield) GetFirstIndex(startIndex uint, valueAt byte) (index uint) {
 
 	byteIndex, bitIndex := b.convertIndex(startIndex)
 
-	for byteIndex < b.effectiveLength {
+	for byteIndex < b.arrayLength {
 		if b.field[byteIndex] != testByteValue {
-			for bitIndex < 8 {
+			for bitIndex < blockSize {
 				if (b.field[byteIndex]<<bitIndex)&0x80 != testBitValue {
 					bitIndex += 1
 				} else {
