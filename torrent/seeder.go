@@ -369,7 +369,7 @@ func writeMessage(w io.Writer, id MessageId, payload []byte) (err error) {
 		return err
 	}
 
-	log.Printf("Message sent: id = %d, len = %d", id, length)
+	//log.Printf("Message sent: id = %d, len = %d", id, length)
 
 	return nil
 }
@@ -380,7 +380,7 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 
 	_, err = io.ReadAtLeast(r, lengthBuffer, 4)
 	if err != nil {
-		panic(err)
+		return Error, nil, err
 	}
 
 	length := binary.BigEndian.Uint32(lengthBuffer)
@@ -398,7 +398,7 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 	id = MessageId(idBuffer[0])
 
 	if id > Cancel && id != KeepAlive {
-		return 0, nil,
+		return Error, nil,
 			fmt.Errorf("read message: message has unsupported id %d", id)
 	}
 
@@ -410,10 +410,10 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 	_, err = io.ReadFull(r, payload)
 
 	if err != nil {
-		panic(err)
+		return Error, nil, err
 	}
 
-	log.Printf("Message received: id = %d, len = %d", id, length)
+	//log.Printf("Message received: id = %d, len = %d", id, length)
 
 	return id, payload, nil
 
