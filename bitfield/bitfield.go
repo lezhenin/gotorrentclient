@@ -2,6 +2,8 @@ package bitfield
 
 import "fmt"
 
+const blockSize = 8
+
 type Bitfield struct {
 	field           []byte
 	length          uint
@@ -61,6 +63,41 @@ func (b *Bitfield) GetIndices(valueAt byte) (indices []uint) {
 		}
 	}
 	return indices
+}
+
+func (b *Bitfield) GetFirstIndex(startIndex uint, valueAt byte) (index uint) {
+
+	testByteValue := uint8(0x00)
+	if valueAt == 0 {
+		testByteValue = uint8(0xFF)
+	}
+
+	testBitValue := uint8(0x80)
+	if valueAt == 0 {
+		testBitValue = uint8(0x00)
+	}
+
+	byteIndex, bitIndex := b.convertIndex(startIndex)
+
+	for byteIndex < b.effectiveLength {
+		if b.field[byteIndex] != testByteValue {
+			for bitIndex < 8 {
+				if (b.field[byteIndex]<<bitIndex)&0x80 != testBitValue {
+					bitIndex += 1
+				} else {
+					return byteIndex*8 + bitIndex
+				}
+			}
+		}
+		bitIndex = 0
+		byteIndex += 1
+	}
+
+	return b.effectiveLength
+}
+
+func BlockSize() int {
+	return blockSize
 }
 
 func NewBitfield(length uint) (b *Bitfield) {

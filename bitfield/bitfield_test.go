@@ -73,6 +73,46 @@ func TestBitfield_Clear(t *testing.T) {
 
 }
 
+func TestBitfield_GetFirstIndex(t *testing.T) {
+
+	b := NewBitfield(bitfieldLength)
+
+	b.Set(2)
+	b.Set(5)
+
+	if b.GetFirstIndex(0, 1) != 2 {
+		t.Error()
+	}
+
+	if b.GetFirstIndex(3, 1) != 5 {
+		t.Error()
+	}
+
+	if b.GetFirstIndex(2, 0) != 3 {
+		t.Error()
+	}
+
+	b.Set(125)
+	b.Set(127)
+
+	if b.GetFirstIndex(6, 1) != 125 {
+		t.Error()
+	}
+
+	if b.GetFirstIndex(125, 1) != 125 {
+		t.Error()
+	}
+
+	if b.GetFirstIndex(126, 1) != 127 {
+		t.Error()
+	}
+
+	if b.GetFirstIndex(125, 0) != 126 {
+		t.Error()
+	}
+
+}
+
 func TestAnd(t *testing.T) {
 
 	b := NewBitfield(bitfieldLength)
@@ -89,10 +129,20 @@ func TestAnd(t *testing.T) {
 
 }
 
+func BenchmarkBitfield_GetFirstIndex(b *testing.B) {
+
+	a := NewBitfield(8 * 1024 * 1024)
+	a.field[1024] = 0x20
+
+	for i := 0; i < b.N; i++ {
+		a.GetFirstIndex(0, 1)
+	}
+}
+
 func BenchmarkAnd(b *testing.B) {
 
-	d := NewBitfield(1024 * 1024)
-	a := NewBitfield(1024 * 1024)
+	d := NewBitfield(8 * 1024 * 1024)
+	a := NewBitfield(8 * 1024 * 1024)
 
 	for i := 0; i < b.N; i++ {
 		_ = And(a, d)
