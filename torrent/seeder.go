@@ -14,6 +14,9 @@ import (
 const protocolId string = "BitTorrent protocol"
 
 const handshakeTimeout = 15
+const requestTimeout = 15
+
+const keepAliveTimeout = 120
 
 const bufferSize = blockLength + 512
 const messageBufferLength = 16
@@ -62,6 +65,8 @@ type Seeder struct {
 
 	incoming  chan Message
 	outcoming chan Message
+
+	keepAliveTimer *time.Timer
 }
 
 func (s *Seeder) Accept(connection net.Conn) (err error) {
@@ -130,34 +135,81 @@ func (s *Seeder) Init(connection net.Conn) (err error) {
 
 func (s *Seeder) run() {
 
+	s.keepAliveTimer = time.NewTimer(time.Second * keepAliveTimeout)
+
+	go s.keepAliveRoutine()
 	go s.readRoutine()
 	go s.writeRoutine()
+
+}
+
+func (s *Seeder) keepAliveRoutine() {
+
+	for {
+
+		<-s.keepAliveTimer.C
+		log.Printf("KEEP ALIVE")
+		s.outcoming <- Message{KeepAlive, nil, s.MyPeerId}
+		s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
+
+	}
 
 }
 
 func (s *Seeder) readRoutine() {
 
 	for {
+
 		id, payload, err := readMessage(s.connection)
+
 		if err != nil {
 			log.Println(err)
 			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 			return
 		}
+
+		if id == Piece {
+			err = s.connection.SetReadDeadline(time.Time{})
+			if err != nil {
+				log.Println(err)
+				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+				return
+			}
+		}
+
 		s.incoming <- Message{id, payload, s.PeerId}
+
 	}
 }
 
 func (s *Seeder) writeRoutine() {
 
 	for {
+
 		message := <-s.outcoming
+
+		if message.Id == Request {
+			err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
+			if err != nil {
+				log.Println(err)
+				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+				return
+			}
+		}
+
+		if message.Id == KeepAlive {
+			log.Printf("KEEP ALIVE 2")
+		}
+
 		err := writeMessage(s.connection, message.Id, message.Payload)
 		if err != nil {
 			log.Println(err)
 			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 			return
 		}
+
+		s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
+
 	}
 }
 
