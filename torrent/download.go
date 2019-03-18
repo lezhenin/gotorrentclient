@@ -78,8 +78,6 @@ type Download struct {
 
 	stop bool
 
-	blocksPerPiece uint8
-
 	pieceDownloadProgress []uint8
 
 	downloadedPieceBitfield  *bitfield.Bitfield
@@ -87,10 +85,15 @@ type Download struct {
 	downloadingBlockBitfield *bitfield.Bitfield
 
 	lastRequestedBlock map[string]uint64
-	lastPieceLength    int64
-	lastBlockLength    int64
-	lastBlockIndex     int64
-	blockCount         int64
+
+	lastPieceLength int64
+	lastBlockLength int64
+
+	blockCount int64
+	pieceCount int64
+
+	blocksPerPiece     uint8
+	blocksPerLastPiece uint8
 }
 
 func (d *Download) getSeeder(peerId []byte) (seeder *Seeder, ok bool) {
@@ -153,7 +156,11 @@ func (d *Download) convertOffsetToPieceIndex(index, offset uint32) (pieceIndex, 
 
 func (d *Download) initDownload() {
 
-	d.pieceDownloadProgress = make([]uint8, d.Metadata.Info.PieceCount)
+	d.pieceDownloadProgress = make([]uint8, d.pieceCount)
+	for index := range d.pieceDownloadProgress {
+		d.pieceDownloadProgress[index] = d.blocksPerPiece
+	}
+	d.pieceDownloadProgress[d.pieceCount-1] = d.blocksPerLastPiece
 }
 
 func (d *Download) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, interested bool) {
@@ -192,12 +199,17 @@ func (d *Download) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 	globalBlockIndex := d.convertPieceToGlobalBlockIndex(pieceIndex, blockIndex)
 	d.downloadedBlockBitfield.Set(uint(globalBlockIndex))
-	d.pieceDownloadProgress[pieceIndex] += 1
+	d.pieceDownloadProgress[pieceIndex] -= 1
 
-	if d.pieceDownloadProgress[pieceIndex] == d.blocksPerPiece {
+	if d.pieceDownloadProgress[pieceIndex] == 0 {
+
+		offset := pieceIndex * pieceLength
+
+		if int64(pieceIndex) == d.pieceCount-1 {
+			pieceLength = int(d.lastPieceLength)
+		}
 
 		data = make([]byte, pieceLength)
-		offset := pieceIndex * pieceLength
 		if _, err := d.overlay.ReadAt(data, int64(offset)); err != nil {
 			panic(err)
 		}
@@ -212,7 +224,12 @@ func (d *Download) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 			log.Printf("Hash is wrong for piece %d", pieceIndex)
 
-			d.pieceDownloadProgress[pieceIndex] = 0
+			if int64(pieceIndex) == d.pieceCount-1 {
+				d.pieceDownloadProgress[pieceIndex] = d.blocksPerLastPiece
+			} else {
+				d.pieceDownloadProgress[pieceIndex] = d.blocksPerPiece
+			}
+
 			startIndex := d.convertPieceToGlobalBlockIndex(pieceIndex, 0)
 			endIndex := d.convertPieceToGlobalBlockIndex(pieceIndex+1, 0)
 			for i := startIndex; i < endIndex; i++ {
@@ -224,7 +241,13 @@ func (d *Download) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 		log.Printf("Accept piece %d", pieceIndex)
 
+		d.State.downloaded += uint64(pieceLength)
+		d.State.left -= uint64(pieceLength)
+
+		log.Printf("Downloaded %d/%d", d.State.downloaded, d.Metadata.Info.TotalLength)
+
 		d.downloadedPieceBitfield.Set(uint(pieceIndex))
+
 		if d.downloadedPieceBitfield.GetFirstIndex(0, 0) == d.downloadedPieceBitfield.Length() {
 			log.Printf("Download finished.")
 			d.stopDownload()
@@ -234,15 +257,13 @@ func (d *Download) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 func (d *Download) stopDownload() {
 
-	log.Printf("Download finished.")
-
 	for _, seeder := range d.getSeederSlice() {
 		seeder.AmInterested = false
 		seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
 	}
 
 	d.stop = true
-	d.Stop()
+	//d.Stop()
 }
 
 func (d *Download) handleMessage(message *Message) {
@@ -266,7 +287,7 @@ func (d *Download) handleMessage(message *Message) {
 
 	case Bitfield:
 
-		seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.Metadata.Info.PieceCount))
+		seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.pieceCount))
 		seeder.outcoming <- Message{Interested, nil, d.PeerId}
 
 	case Have:
@@ -476,25 +497,25 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	download.messages = make(chan Message, 32)
 
 	download.blocksPerPiece = uint8(download.Metadata.Info.PieceLength / int64(blockLength))
+	download.pieceCount = download.Metadata.Info.PieceCount
 
 	download.lastRequestedBlock = make(map[string]uint64)
 
 	download.lastPieceLength = download.Metadata.Info.TotalLength % download.Metadata.Info.PieceLength
 	download.lastBlockLength = download.lastPieceLength % int64(blockLength)
 
-	download.lastBlockIndex = (download.Metadata.Info.PieceCount - 1) * int64(download.blocksPerPiece)
-	download.lastBlockIndex += download.lastPieceLength / int64(blockLength)
+	download.blocksPerLastPiece = uint8(download.lastPieceLength / int64(blockLength))
+	if download.lastPieceLength%int64(blockLength) > 0 {
+		download.blocksPerLastPiece += 1
+	}
 
-	download.blockCount = (download.Metadata.Info.PieceCount - 1) * int64(download.blocksPerPiece)
-	download.blockCount += download.lastPieceLength/int64(blockLength) + 1
-
-	log.Printf("lps %d", download.lastPieceLength)
-	log.Printf("lpi %d", download.lastBlockIndex)
+	download.blockCount = (download.pieceCount - 1) * int64(download.blocksPerPiece)
+	download.blockCount += int64(download.blocksPerLastPiece)
 
 	download.downloadingBlockBitfield = bitfield.NewBitfield(uint(download.blockCount))
 	download.downloadedBlockBitfield = bitfield.NewBitfield(uint(download.blockCount))
 
-	download.downloadedPieceBitfield = bitfield.NewBitfield(uint(download.Metadata.Info.PieceCount))
+	download.downloadedPieceBitfield = bitfield.NewBitfield(uint(download.pieceCount))
 
 	log.Printf("Download was created successfully: peer id = %v", download.PeerId)
 	log.Println(download.blocksPerPiece)
