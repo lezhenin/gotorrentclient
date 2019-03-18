@@ -26,7 +26,7 @@ type DownloadStateObserver interface {
 	GetLeftByteCount() uint64
 }
 
-type Connection struct {
+type Tracker struct {
 	stateObserver DownloadStateObserver
 	peerId        []byte
 	infoHash      []byte
@@ -51,7 +51,7 @@ type Connection struct {
 	errorChannel chan error
 }
 
-func (c *Connection) routine() {
+func (c *Tracker) routine() {
 
 	for {
 
@@ -103,7 +103,7 @@ func (c *Connection) routine() {
 	}
 }
 
-func (c *Connection) Start() {
+func (c *Tracker) Start() {
 
 	if c.lastEvent == Started {
 		panic("Start while started")
@@ -121,7 +121,7 @@ func (c *Connection) Start() {
 	c.lastEvent = Started
 }
 
-func (c *Connection) Stop() {
+func (c *Tracker) Stop() {
 
 	if c.lastEvent == Stopped {
 		panic("Stop while stopped")
@@ -140,7 +140,7 @@ func (c *Connection) Stop() {
 
 }
 
-func (c *Connection) Complete() {
+func (c *Tracker) Complete() {
 
 	if c.lastEvent == Completed {
 		panic("Complete while Completed")
@@ -161,9 +161,9 @@ func (c *Connection) Complete() {
 
 func NewTrackerConnection(
 	announce string, peerId []byte, infoHash []byte,
-	port uint16, stateObserver DownloadStateObserver) (trackerConnection *Connection, err error) {
+	port uint16, stateObserver DownloadStateObserver) (trackerConnection *Tracker, err error) {
 
-	trackerConnection = new(Connection)
+	trackerConnection = new(Tracker)
 
 	if len(peerId) != 20 {
 		return nil,
@@ -221,7 +221,7 @@ func NewTrackerConnection(
 
 }
 
-func (c *Connection) EstablishConnection() (err error) {
+func (c *Tracker) EstablishConnection() (err error) {
 
 	if !c.expire {
 		return nil
@@ -247,14 +247,14 @@ func (c *Connection) EstablishConnection() (err error) {
 	c.expire = false
 	c.expirationTimer.Reset(time.Minute)
 
-	log.Printf("Connection to torrent %s was established: c id = %d",
+	log.Printf("Tracker to torrent %s was established: c id = %d",
 		c.trackerURL.String(), c.connectionId)
 
 	return nil
 
 }
 
-func (c *Connection) SendAnnounce(event Event) (interval uint32, seeders []string, err error) {
+func (c *Tracker) SendAnnounce(event Event) (interval uint32, seeders []string, err error) {
 
 	transactionId := rand.Uint32()
 	request := c.makeAnnounceRequest(transactionId, event)
@@ -352,7 +352,7 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 //96      16-bit integer  listenPort
 //98
 
-func (c *Connection) makeAnnounceRequest(transactionId uint32, event Event) (data []byte) {
+func (c *Tracker) makeAnnounceRequest(transactionId uint32, event Event) (data []byte) {
 
 	data = make([]byte, 98)
 
