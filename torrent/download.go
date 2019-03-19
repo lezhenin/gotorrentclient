@@ -90,6 +90,9 @@ type Download struct {
 	blocksPerLastPiece uint8
 
 	interestingPeerCount int
+
+	acceptedPeers chan string
+	receivedPeers chan string
 }
 
 func (d *Download) getSeeder(peerId []byte) (seeder *Seeder, ok bool) {
@@ -450,7 +453,6 @@ func (d *Download) handleRoutine() {
 
 		case message := <-d.messages:
 			d.handleMessage(&message)
-
 			//default:
 			//
 			//	continue
@@ -460,43 +462,96 @@ func (d *Download) handleRoutine() {
 
 }
 
+func (d *Download) serverRoutine() {
+
+	listen, err := net.Listen("tcp", "localhost:6881")
+	if err != nil {
+		panic(err)
+	}
+
+	for {
+
+		conn, err := listen.Accept()
+		if err != nil {
+			panic(err)
+		}
+
+		log.Println("ACCEPT CONNECTION FROM", conn.RemoteAddr().String())
+
+		seeder, err := NewSeeder(d.InfoHash, d.PeerId, d.messages)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		err = seeder.Accept(conn)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		d.addSeeder(seeder)
+		seeder.Run()
+	}
+}
+
+func (d *Download) seederRoutine() {
+
+	for {
+
+		select {
+
+		case peer := <-d.receivedPeers:
+
+			addr, err := net.ResolveTCPAddr("tcp", peer)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			conn, err := net.DialTimeout(addr.Network(), addr.String(), time.Second)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			s, err := NewSeeder(d.Metadata.Info.HashSHA1, d.PeerId, d.messages)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			s.PeerBitfield = bitfield.NewBitfield(uint(d.blockCount))
+
+			err = s.Init(conn)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			d.addSeeder(s)
+
+			s.Run()
+		}
+
+	}
+
+}
+
 func (d *Download) Start() {
+
+	go d.handleRoutine()
+	go d.seederRoutine()
+	go d.seederRoutine()
 
 	d.TrackerConnection.Start()
 
 	for i := range d.TrackerConnection.Seeders {
 		log.Printf(d.TrackerConnection.Seeders[i])
 
-		addr, err := net.ResolveTCPAddr("tcp", d.TrackerConnection.Seeders[i])
-		if err != nil {
-			log.Println(err)
-			continue
-		}
+		d.receivedPeers <- d.TrackerConnection.Seeders[i]
 
-		conn, err := net.DialTimeout(addr.Network(), addr.String(), time.Second)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		s, err := NewSeeder(d.Metadata.Info.HashSHA1, d.PeerId, d.messages)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		s.PeerBitfield = bitfield.NewBitfield(uint(d.blockCount))
-
-		err = s.Init(conn)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		d.addSeeder(s)
 	}
-
-	go d.handleRoutine()
 
 	//time.Sleep(120 * time.Second)
 
@@ -581,6 +636,9 @@ func NewDownload(torrentFilePath string, downloadPath string) (download *Downloa
 	if err != nil {
 		return nil, err
 	}
+
+	download.receivedPeers = make(chan string, 8)
+	download.acceptedPeers = make(chan string, 8)
 
 	download.seedersMap = make(map[string]*Seeder)
 	download.messages = make(chan Message, 32)

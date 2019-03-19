@@ -66,6 +66,7 @@ type Seeder struct {
 	incoming  chan Message
 	outcoming chan Message
 
+	keepAlive      bool
 	keepAliveTimer *time.Timer
 }
 
@@ -94,8 +95,6 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 	if err != nil {
 		return err
 	}
-
-	s.run()
 
 	return nil
 
@@ -127,13 +126,11 @@ func (s *Seeder) Init(connection net.Conn) (err error) {
 		return err
 	}
 
-	s.run()
-
 	return nil
 
 }
 
-func (s *Seeder) run() {
+func (s *Seeder) Run() {
 
 	s.keepAliveTimer = time.NewTimer(time.Second * keepAliveTimeout)
 
@@ -148,7 +145,6 @@ func (s *Seeder) keepAliveRoutine() {
 	for {
 
 		<-s.keepAliveTimer.C
-		log.Printf("KEEP ALIVE")
 		s.outcoming <- Message{KeepAlive, nil, s.MyPeerId}
 		s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
 
@@ -195,10 +191,6 @@ func (s *Seeder) writeRoutine() {
 				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 				return
 			}
-		}
-
-		if message.Id == KeepAlive {
-			log.Printf("KEEP ALIVE 2")
 		}
 
 		err := writeMessage(s.connection, message.Id, message.Payload)

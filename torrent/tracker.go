@@ -380,7 +380,7 @@ func (c *Tracker) makeAnnounceRequest(transactionId uint32, event Event) (data [
 	binary.BigEndian.PutUint32(addressIpBytes, 0) // default
 	binary.BigEndian.PutUint32(keyBytes, 0)
 	binary.BigEndian.PutUint32(numWantBytes, 50) // default
-	binary.BigEndian.PutUint16(portBytes, c.listenPort)
+	binary.BigEndian.PutUint16(portBytes, 6881)
 
 	copy(infoHashBytes, c.infoHash)
 	copy(peerIdBytes, c.peerId)
