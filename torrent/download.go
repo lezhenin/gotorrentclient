@@ -167,7 +167,7 @@ func (d *Download) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, int
 			return pieceIndex, blockIndex, true
 		}
 
-		index = d.downloadingBlockBitfield.GetFirstIndex(index, 0)
+		index = d.downloadingBlockBitfield.GetFirstIndex(index+1, 0)
 	}
 
 	return 0, 0, false
@@ -282,6 +282,117 @@ func (d *Download) stopDownload() {
 
 func (d *Download) completeDownload() {}
 
+func (d *Download) handleError(seeder *Seeder) {
+
+	index, ok := d.lastRequestedBlock[string(seeder.PeerId)]
+	if ok && d.downloadedBlockBitfield.Get(uint(index)) == 0 {
+		d.downloadingBlockBitfield.Clear(uint(index))
+	}
+
+	for _, anotherSeeder := range d.getSeederSlice() {
+		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(index)) == 1 {
+			seeder.outcoming <- Message{Interested, nil, d.PeerId}
+			d.interestingPeerCount += 1
+		}
+	}
+
+	if seeder.AmInterested == true {
+		d.interestingPeerCount -= 1
+	}
+
+}
+
+func (d *Download) handleBitfiedMessage(seeder *Seeder, payload []byte) {
+
+	seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(payload, uint(d.pieceCount))
+	interestedPieceCount := bitfield.AndNot(seeder.PeerBitfield, d.downloadedPieceBitfield).Count(1)
+	if interestedPieceCount > 0 && seeder.AmInterested == false {
+		seeder.AmInterested = true
+		seeder.outcoming <- Message{Interested, nil, d.PeerId}
+		d.interestingPeerCount += 1
+	}
+}
+
+func (d *Download) handleHaveMessage(seeder *Seeder, payload []byte) {
+
+	pieceIndex, err := parseHavePayload(payload)
+	if err != nil {
+		seeder.Close()
+		return
+	}
+
+	seeder.PeerBitfield.Set(uint(pieceIndex))
+	if d.downloadedPieceBitfield.Get(uint(pieceIndex)) == 0 && seeder.AmInterested == false {
+		seeder.AmInterested = true
+		seeder.outcoming <- Message{Interested, nil, d.PeerId}
+		d.interestingPeerCount += 1
+	}
+}
+
+func (d *Download) handleChokeMessage(seeder *Seeder) {
+
+	seeder.PeerChoking = true
+	if seeder.AmInterested == true {
+		seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
+		d.interestingPeerCount -= 1
+	}
+}
+
+func (d *Download) handleUnchokeMessage(seeder *Seeder) {
+
+	seeder.PeerChoking = false
+	if seeder.AmInterested == true {
+		pieceIndex, blockIndex, _ := d.requestPiece(seeder)
+		index, offset, length := d.convertPieceIndexToOffset(pieceIndex, blockIndex)
+		payload := makeRequestPayload(index, offset, length)
+		seeder.outcoming <- Message{Request, payload, d.PeerId}
+	}
+}
+
+func (d *Download) handleInterestedMessage(seeder *Seeder) {
+
+	seeder.PeerInterested = true
+	if true { // todo condition
+		seeder.AmChoking = false
+		seeder.outcoming <- Message{Unchoke, nil, d.PeerId}
+	}
+}
+
+func (d *Download) handleNotInterestedMessage(seeder *Seeder) {
+
+	seeder.PeerInterested = false
+	seeder.AmChoking = true
+	seeder.outcoming <- Message{Choke, nil, d.PeerId}
+}
+
+func (d *Download) handleRequestMessage(seeder *Seeder, payload []byte) {
+	if seeder.AmChoking == false {
+		//todo
+	}
+}
+
+func (d *Download) handlePieceMessage(seeder *Seeder, payload []byte) {
+
+	index, offset, data, err := parsePiecePayload(payload)
+	if err != nil {
+		seeder.Close()
+		return
+	}
+
+	pieceIndex, blockIndex := d.convertOffsetToPieceIndex(index, offset)
+	d.acceptPiece(pieceIndex, blockIndex, data)
+	pieceIndex, blockIndex, interested := d.requestPiece(seeder)
+
+	if interested {
+		index, offset, length := d.convertPieceIndexToOffset(pieceIndex, blockIndex)
+		payload := makeRequestPayload(index, offset, length)
+		seeder.outcoming <- Message{Request, payload, d.PeerId}
+	} else {
+		seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
+		d.interestingPeerCount -= 1
+	}
+}
+
 func (d *Download) handleMessage(message *Message) {
 
 	seeder, ok := d.getSeeder(message.PeerId)
@@ -294,84 +405,33 @@ func (d *Download) handleMessage(message *Message) {
 	switch message.Id {
 
 	case Error:
-
+		d.handleError(seeder)
 		d.deleteSeeder(message.PeerId)
-		index, ok := d.lastRequestedBlock[string(message.PeerId)]
-		if ok && d.downloadedBlockBitfield.Get(uint(index)) == 0 {
-			d.downloadingBlockBitfield.Clear(uint(index))
-		}
 
 	case Bitfield:
-
-		seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(message.Payload, uint(d.pieceCount))
-		d.expressInterest(seeder)
+		d.handleBitfiedMessage(seeder, message.Payload)
 
 	case Have:
-
-		pieceIndex, err := parseHavePayload(message.Payload)
-		if err != nil {
-			seeder.Close()
-		}
-		seeder.PeerBitfield.Set(uint(pieceIndex))
-		d.expressInterest(seeder)
+		d.handleHaveMessage(seeder, message.Payload)
 
 	case Choke:
-
-		seeder.PeerChoking = true
+		d.handleChokeMessage(seeder)
 
 	case Unchoke:
-
-		seeder.PeerChoking = false
-		pieceIndex, blockIndex, _ := d.requestPiece(seeder)
-		index, offset, length := d.convertPieceIndexToOffset(pieceIndex, blockIndex)
-		payload := makeRequestPayload(index, offset, length)
-		seeder.outcoming <- Message{Request, payload, d.PeerId}
+		d.handleUnchokeMessage(seeder)
 
 	case Interested:
-
-		seeder.PeerInterested = true
-		if true { // todo condition
-			seeder.AmChoking = false
-			seeder.outcoming <- Message{Unchoke, nil, d.PeerId}
-		}
+		d.handleInterestedMessage(seeder)
 
 	case NotInterested:
-
-		seeder.PeerInterested = false
-		seeder.AmChoking = true
-		seeder.outcoming <- Message{Choke, nil, d.PeerId}
+		d.handleNotInterestedMessage(seeder)
 
 	case Request:
-
-		if seeder.AmChoking == false {
-			//todo
-		}
+		d.handleRequestMessage(seeder, message.Payload)
 
 	case Piece:
+		d.handlePieceMessage(seeder, message.Payload)
 
-		index, offset, data, err := parsePiecePayload(message.Payload) // todo err
-		if err != nil {
-			seeder.Close()
-		}
-
-		pieceIndex, blockIndex := d.convertOffsetToPieceIndex(index, offset)
-		d.acceptPiece(pieceIndex, blockIndex, data)
-		pieceIndex, blockIndex, interested := d.requestPiece(seeder)
-
-		if interested {
-			index, offset, length := d.convertPieceIndexToOffset(pieceIndex, blockIndex)
-			payload := makeRequestPayload(index, offset, length)
-			seeder.outcoming <- Message{Request, payload, d.PeerId}
-		} else {
-			seeder.outcoming <- Message{NotInterested, nil, d.PeerId}
-			d.interestingPeerCount -= 1
-
-			if d.interestingPeerCount == 0 && d.State.left != 0 {
-				for _, seeder := range d.getSeederSlice() {
-					d.expressInterest(seeder)
-				}
-			}
-		}
 	}
 }
 
@@ -437,7 +497,6 @@ func (d *Download) Start() {
 	}
 
 	go d.handleRoutine()
-	//go d.manageRoutine()
 
 	//time.Sleep(120 * time.Second)
 
