@@ -92,6 +92,8 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	log.Printf("m was created successfully: peer id = %v", m.peerId)
 	log.Println(m.blocksPerPiece)
 
+	m.Done = make(chan struct{}, 1)
+
 	return m
 }
 
@@ -110,7 +112,12 @@ func (m *Manager) Start() {
 				m.handleMessage(&message)
 
 			case <-m.stopped:
-
+				for _, seeder := range m.getSeederSlice() {
+					seeder.Close()
+					m.deleteSeeder(seeder.PeerId)
+				}
+				m.downloadingBlockBitfield =
+					bitfield.And(m.downloadingBlockBitfield, m.downloadedBlockBitfield)
 				return
 
 			}
@@ -132,6 +139,8 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 		return err
 	}
 
+	seeder.PeerBitfield = bitfield.NewBitfield(uint(m.info.PieceCount))
+
 	if accept {
 		err = seeder.Accept(conn)
 	} else {
@@ -144,6 +153,7 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 
 	m.addSeeder(seeder)
 
+	seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
 	seeder.Run()
 
 	return nil
@@ -285,16 +295,24 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 		log.Printf("Accept piece %d", pieceIndex)
 
-		m.state.downloaded += uint64(pieceLength)
-		m.state.left -= uint64(pieceLength)
+		m.state.IncrementDownloaded(uint64(pieceLength))
+		m.state.DecrementLeft(uint64(pieceLength))
 
 		log.Printf("Downloaded %d/%d", m.state.downloaded, m.info.TotalLength)
 
 		m.downloadedPieceBitfield.Set(uint(pieceIndex))
+		m.state.SetBitfieldBit(uint(pieceIndex))
+
+		for _, s := range m.getSeederSlice() {
+			if s.PeerBitfield.Get(uint(pieceIndex)) == 0 {
+				log.Printf("SEND HAVE")
+				s.outcoming <- Message{Have, makeHavePayload(uint32(pieceIndex)), m.peerId}
+			}
+		}
 
 		if m.downloadedPieceBitfield.GetFirstIndex(0, 0) == m.downloadedPieceBitfield.Length() {
-			log.Printf("Download finished.")
-			//m.stopDownload()
+			m.Done <- struct{}{}
+			log.Printf("Download completed.")
 		}
 	}
 }
@@ -398,9 +416,30 @@ func (m *Manager) handleNotInterestedMessage(seeder *Seeder) {
 }
 
 func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
-	if seeder.AmChoking == false {
-		//todo
+
+	if seeder.AmChoking == true {
+		return
 	}
+
+	index, offset, length, _ := parseRequestPayload(payload)
+
+	if seeder.PeerBitfield.Get(uint(index)) == 1 {
+		return
+	}
+
+	log.Printf("SEND PIECE")
+
+	data := make([]byte, length)
+	_, err := m.storage.ReadAt(data, int64(index)*m.pieceCount+int64(offset))
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	seeder.outcoming <- Message{Piece, makePiecePayload(index, offset, data), m.peerId}
+
+	m.state.IncrementUploaded(uint64(length))
+
 }
 
 func (m *Manager) handlePieceMessage(seeder *Seeder, payload []byte) {

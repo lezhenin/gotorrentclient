@@ -54,6 +54,7 @@ type Seeder struct {
 	PeerInterested bool
 
 	PeerBitfield *bitfield.Bitfield
+	MyBitfield   *bitfield.Bitfield
 
 	PeerId []byte
 
