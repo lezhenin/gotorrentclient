@@ -3,11 +3,9 @@ package torrent
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net"
-	"net/url"
 	"time"
 )
 
@@ -20,82 +18,89 @@ const (
 	Stopped   Event = 3
 )
 
-type DownloadStateObserver interface {
-	GetDownloadedByteCount() uint64
-	GetUploadedByteCount() uint64
-	GetLeftByteCount() uint64
+type AnnounceRequest struct {
+	Event      Event
+	Downloaded uint64
+	Uploaded   uint64
+	Left       uint64
+	Port       uint16
+	PeersCount uint32
+}
+
+type AnnounceResponse struct {
+	AnnounceInterval uint32
+	SeedersCount     uint32
+	LechersCount     uint32
+	Peers            []string
 }
 
 type Tracker struct {
-	stateObserver DownloadStateObserver
-	peerId        []byte
-	infoHash      []byte
-	listenPort    uint16
+	connection net.Conn
 
-	Seeders []string
+	expire        bool
+	connectionId  uint64
+	transactionId uint32
 
-	trackerURL    *url.URL
-	connectionUDP io.ReadWriter
-
-	interval uint32
-
-	expire       bool
-	connectionId uint64
-
-	lastEvent Event
-
-	announceTimer   *time.Timer
 	expirationTimer *time.Timer
 
-	eventChannel chan Event
+	announceRequestChannel  chan AnnounceRequest
+	announceResponseChannel chan AnnounceResponse
+
+	peerId   []byte
+	infoHash []byte
+
 	errorChannel chan error
 }
 
-func (c *Tracker) routine() {
+func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker, err error) {
+
+	tracker = new(Tracker)
+
+	tracker.connection = connection
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Tracker connection to %s is created\n", connection.RemoteAddr())
+
+	tracker.expirationTimer = time.NewTimer(0)
+	<-tracker.expirationTimer.C
+
+	tracker.expire = true
+
+	tracker.announceRequestChannel = make(chan AnnounceRequest, 1)
+	tracker.announceResponseChannel = make(chan AnnounceResponse, 1)
+
+	tracker.errorChannel = make(chan error, 1)
+
+	tracker.infoHash = infoHash
+	tracker.peerId = peerId
+
+	return tracker, nil
+
+}
+
+func (t *Tracker) Run() {
+	go t.routine()
+}
+
+func (t *Tracker) routine() {
 
 	for {
 
 		select {
 
-		case <-c.expirationTimer.C:
-			c.expire = true
+		case <-t.expirationTimer.C:
 
-		case <-c.announceTimer.C:
+			t.expire = true
 
-			err := c.EstablishConnection()
+		case request := <-t.announceRequestChannel:
+
+			response, err := t.announce(request)
 			if err != nil {
-				panic(err)
-			}
-
-			c.interval, c.Seeders, err = c.SendAnnounce(None)
-			if err != nil {
-				panic(err)
-			}
-
-			c.announceTimer.Reset(time.Duration(c.interval) * time.Second)
-
-			c.errorChannel <- nil
-
-		case event := <-c.eventChannel:
-
-			err := c.EstablishConnection()
-			if err != nil {
-				c.errorChannel <- err
-				continue
-			}
-
-			c.interval, c.Seeders, err = c.SendAnnounce(event)
-			if err != nil {
-				c.errorChannel <- err
-				continue
-			}
-
-			c.errorChannel <- nil
-
-			if event == Started {
-				c.announceTimer.Reset(time.Duration(c.interval) * time.Second)
-			} else if event == Completed || event == Stopped {
-				break
+				t.errorChannel <- err
+			} else {
+				t.announceResponseChannel <- response
 			}
 
 		}
@@ -103,186 +108,72 @@ func (c *Tracker) routine() {
 	}
 }
 
-func (c *Tracker) Start() {
+func (t *Tracker) establishConnection() (connectionId uint64, err error) {
 
-	if c.lastEvent == Started {
-		panic("Start while started")
-	}
-
-	go c.routine()
-
-	c.eventChannel <- Started
-
-	err := <-c.errorChannel
-	if err != nil {
-		panic(err)
-	}
-
-	c.lastEvent = Started
-}
-
-func (c *Tracker) Stop() {
-
-	if c.lastEvent == Stopped {
-		panic("Stop while stopped")
-	}
-
-	c.expirationTimer.Stop()
-	c.announceTimer.Stop()
-
-	c.eventChannel <- Stopped
-	err := <-c.errorChannel
-	if err != nil {
-		panic(err)
-	}
-
-	c.lastEvent = Stopped
-
-}
-
-func (c *Tracker) Complete() {
-
-	if c.lastEvent == Completed {
-		panic("Complete while Completed")
-	}
-
-	c.expirationTimer.Stop()
-	c.announceTimer.Stop()
-
-	c.eventChannel <- Completed
-	err := <-c.errorChannel
-	if err != nil {
-		panic(err)
-	}
-
-	c.lastEvent = Completed
-
-}
-
-func NewTrackerConnection(
-	announce string, peerId []byte, infoHash []byte,
-	port uint16, stateObserver DownloadStateObserver) (trackerConnection *Tracker, err error) {
-
-	trackerConnection = new(Tracker)
-
-	if len(peerId) != 20 {
-		return nil,
-			fmt.Errorf("new torrent connection: peer id has wrong len %d",
-				len(peerId))
-	}
-
-	trackerConnection.peerId = peerId
-
-	if len(infoHash) != 20 {
-		return nil,
-			fmt.Errorf("new torrent connection: info hash has wrong len %d",
-				len(infoHash))
-	}
-
-	trackerConnection.infoHash = infoHash
-
-	trackerConnection.trackerURL, err = url.Parse(announce)
-	if err != nil {
-		return nil, err
-	}
-
-	if trackerConnection.trackerURL.Scheme != "udp" {
-		return nil,
-			fmt.Errorf("new torrent connection: %s torrent protocol is not supported yet",
-				trackerConnection.trackerURL.Scheme)
-	}
-
-	trackerConnection.stateObserver = stateObserver
-
-	trackerConnection.listenPort = port
-
-	trackerConnection.connectionUDP, err =
-		net.Dial("udp", trackerConnection.trackerURL.Host)
-
-	if err != nil {
-		panic(err)
-	}
-
-	log.Printf("UDP connection to %s is created\n", trackerConnection.trackerURL.Host)
-
-	trackerConnection.expirationTimer = time.NewTimer(0)
-	trackerConnection.announceTimer = time.NewTimer(0)
-
-	<-trackerConnection.expirationTimer.C
-	<-trackerConnection.announceTimer.C
-
-	trackerConnection.expire = true
-	trackerConnection.lastEvent = None
-
-	trackerConnection.eventChannel = make(chan Event, 1)
-	trackerConnection.errorChannel = make(chan error, 1)
-
-	return trackerConnection, nil
-
-}
-
-func (c *Tracker) EstablishConnection() (err error) {
-
-	if !c.expire {
-		return nil
+	if !t.expire {
+		return t.connectionId, nil
 	}
 
 	transactionId := rand.Uint32()
 
 	request := makeConnectionRequest(transactionId)
-	_, err = c.connectionUDP.Write(request)
+	_, err = t.connection.Write(request)
 
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 
 	response := make([]byte, 16)
-	_, err = c.connectionUDP.Read(response)
-	c.connectionId, err = parseConnectionResponse(response, transactionId)
+	_, err = t.connection.Read(response)
+	t.connectionId, err = parseConnectionResponse(response, transactionId)
 
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 
-	c.expire = false
-	c.expirationTimer.Reset(time.Minute)
+	t.expire = false
+	t.expirationTimer.Reset(time.Minute)
 
-	log.Printf("Tracker to torrent %s was established: c id = %d",
-		c.trackerURL.String(), c.connectionId)
+	log.Printf("Tracker to torrent %s was established: t id = %d",
+		t.connection.RemoteAddr(), t.connectionId)
 
-	return nil
+	return t.connectionId, nil
 
 }
 
-func (c *Tracker) SendAnnounce(event Event) (interval uint32, seeders []string, err error) {
+func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, err error) {
+
+	connectionId, err := t.establishConnection()
+	if err != nil {
+		return AnnounceResponse{}, err
+	}
 
 	transactionId := rand.Uint32()
-	request := c.makeAnnounceRequest(transactionId, event)
+	data := makeAnnounceRequest(t.peerId, t.infoHash, connectionId, transactionId, request)
 
-	_, err = c.connectionUDP.Write(request)
-
-	if err != nil {
-		panic(err)
-	}
-
-	response := make([]byte, 512)
-	n, err := c.connectionUDP.Read(response)
+	_, err = t.connection.Write(data)
 
 	if err != nil {
-		panic(err)
+		return AnnounceResponse{}, err
 	}
 
-	response = response[0:n]
-	interval, seeders, err = parseAnnounceResponse(response, transactionId)
+	data = make([]byte, 1024)
+	n, err := t.connection.Read(data)
 
 	if err != nil {
-		panic(err)
+		return AnnounceResponse{}, err
 	}
 
-	log.Printf("Announce with event %d is send: %d peers received, interval %d.\n",
-		event, len(seeders), interval)
+	response, err = parseAnnounceResponse(data[:n], transactionId)
 
-	return interval, seeders, nil
+	if err != nil {
+		return AnnounceResponse{}, err
+	}
+
+	log.Printf("announce with event %d is send: %d peers received, interval %d.\n",
+		request.Event, len(response.Peers), response.AnnounceInterval)
+
+	return response, nil
 
 }
 
@@ -330,12 +221,6 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 
 }
 
-//func (torrent *Tracker) GetSeeders (n int32) {
-//
-//
-//
-//}
-
 //Offset  Size    Name    Value
 //0       64-bit integer  connection_id
 //8       32-bit integer  action          1 // announce
@@ -352,7 +237,7 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 //96      16-bit integer  listenPort
 //98
 
-func (c *Tracker) makeAnnounceRequest(transactionId uint32, event Event) (data []byte) {
+func makeAnnounceRequest(peerId, infoHash []byte, connectionId uint64, transactionId uint32, request AnnounceRequest) (data []byte) {
 
 	data = make([]byte, 98)
 
@@ -370,20 +255,20 @@ func (c *Tracker) makeAnnounceRequest(transactionId uint32, event Event) (data [
 	numWantBytes := data[92:96]
 	portBytes := data[96:98]
 
-	binary.BigEndian.PutUint64(connectionIdBytes, c.connectionId)
-	binary.BigEndian.PutUint32(actionBytes, 1)
+	binary.BigEndian.PutUint64(connectionIdBytes, connectionId)
+	binary.BigEndian.PutUint32(actionBytes, 1) // anounce
 	binary.BigEndian.PutUint32(transactionIdBytes, transactionId)
-	binary.BigEndian.PutUint64(downloadedBytes, c.stateObserver.GetDownloadedByteCount())
-	binary.BigEndian.PutUint64(leftBytes, c.stateObserver.GetLeftByteCount())
-	binary.BigEndian.PutUint64(uploadedBytes, c.stateObserver.GetUploadedByteCount())
-	binary.BigEndian.PutUint32(eventBytes, uint32(event))
+	binary.BigEndian.PutUint64(downloadedBytes, request.Downloaded)
+	binary.BigEndian.PutUint64(leftBytes, request.Left)
+	binary.BigEndian.PutUint64(uploadedBytes, request.Uploaded)
+	binary.BigEndian.PutUint32(eventBytes, uint32(request.Event))
 	binary.BigEndian.PutUint32(addressIpBytes, 0) // default
-	binary.BigEndian.PutUint32(keyBytes, 0)
-	binary.BigEndian.PutUint32(numWantBytes, 50) // default
-	binary.BigEndian.PutUint16(portBytes, 6881)
+	binary.BigEndian.PutUint32(keyBytes, 0)       // default
+	binary.BigEndian.PutUint32(numWantBytes, request.PeersCount)
+	binary.BigEndian.PutUint16(portBytes, request.Port)
 
-	copy(infoHashBytes, c.infoHash)
-	copy(peerIdBytes, c.peerId)
+	copy(infoHashBytes, infoHash)
+	copy(peerIdBytes, peerId)
 
 	return data
 }
@@ -398,53 +283,51 @@ func (c *Tracker) makeAnnounceRequest(transactionId uint32, event Event) (data [
 //24 + 6 * n  16-bit integer  TCP port
 //20 + 6 * N
 
-func parseAnnounceResponse(response []byte, expectedTransactionId uint32) (
-	interval uint32, seederAddresses []string, err error) {
+func parseAnnounceResponse(data []byte, expectedTransactionId uint32) (response AnnounceResponse, err error) {
 
-	if len(response) < 20 {
-		return 0, nil,
+	if len(data) < 20 {
+		return AnnounceResponse{},
 			fmt.Errorf("parse announce response:"+
-				" message length %d < 20, data = %v", len(response), response)
+				" message length %d < 20, data = %v", len(data), data)
 	}
 
-	actionBytes := response[0:4]
-	transactionIdBytes := response[4:8]
-	intervalBytes := response[8:12]
-	//leechersNumberBytes := response[12:16]
-	//seedersNumberBytes := response[16:20]
+	actionBytes := data[0:4]
+	transactionIdBytes := data[4:8]
+	intervalBytes := data[8:12]
+	lechersNumberBytes := data[12:16]
+	seedersNumberBytes := data[16:20]
 
 	if binary.BigEndian.Uint32(transactionIdBytes) != expectedTransactionId {
-		return 0, nil,
+		return AnnounceResponse{},
 			fmt.Errorf("parse announce response:" +
 				" transaction id doesn't match expected value")
 	}
 
 	if binary.BigEndian.Uint32(actionBytes) != 1 {
-		return 0, nil,
+		return AnnounceResponse{},
 			fmt.Errorf("parse announce response: action != 1")
 	}
 
-	//leechersNumber := binary.BigEndian.Uint32(leechersNumberBytes)
-	//seedersNumber := binary.BigEndian.Uint32(seedersNumberBytes)
+	response.AnnounceInterval = binary.BigEndian.Uint32(intervalBytes)
 
-	receivedPeersCount := (len(response) - 20) / 6
-	seederAddresses = make([]string, receivedPeersCount)
+	response.LechersCount = binary.BigEndian.Uint32(lechersNumberBytes)
+	response.SeedersCount = binary.BigEndian.Uint32(seedersNumberBytes)
+
+	receivedPeersCount := (len(data) - 20) / 6
+	response.Peers = make([]string, receivedPeersCount)
 
 	for i := 0; i < int(receivedPeersCount); i++ {
 
-		addrBytes := response[20+6*i : 20+6*(i+1)]
+		addrBytes := data[20+6*i : 20+6*(i+1)]
 		addrString := fmt.Sprintf("%d.%d.%d.%d:%d",
 			addrBytes[0], addrBytes[1], addrBytes[2], addrBytes[3],
 			binary.BigEndian.Uint16(addrBytes[4:6]))
 
 		fmt.Println(addrString)
 
-		seederAddresses[i] = addrString
-		if err != nil {
-			return 0, nil, err
-		}
+		response.Peers[i] = addrString
 
 	}
 
-	return binary.BigEndian.Uint32(intervalBytes), seederAddresses, nil
+	return response, nil
 }
