@@ -5,6 +5,7 @@ import (
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/lezhenin/gotorrentclient/torrent"
 	"log"
+	"math"
 	"path"
 )
 
@@ -202,9 +203,9 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 		}
 
 		view.AppendColumn(createColumn("Filename", COLUMN_FILENAME))
-		view.AppendColumn(createColumn("Length (bytes)", COLUMN_LENGTH))
+		view.AppendColumn(createColumn("Length (MiB)", COLUMN_LENGTH))
 
-		store, err := gtk.TreeStoreNew(glib.TYPE_STRING, glib.TYPE_INT64)
+		store, err := gtk.TreeStoreNew(glib.TYPE_STRING, glib.TYPE_FLOAT)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -343,7 +344,7 @@ func addSubRow(treeStore *gtk.TreeStore, parentIter *gtk.TreeIter, filename stri
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = treeStore.SetValue(iter, COLUMN_LENGTH, length)
+	err = treeStore.SetValue(iter, COLUMN_LENGTH, float64(length)/math.Pow(2, 20))
 	if err != nil {
 		log.Fatal(err)
 	}
