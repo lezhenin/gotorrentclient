@@ -3,7 +3,9 @@ package main
 import (
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
+	"github.com/lezhenin/gotorrentclient/torrent"
 	"log"
+	"path"
 )
 
 const (
@@ -90,21 +92,6 @@ func main() {
 	gtk.Main()
 }
 
-//func createFileChooserDialog(parrent *gtk.Window) *gtk.FileChooserDialog {
-//	dialog, err :=
-//		gtk.FileChooserDialogNewWith1Button(
-//			"Open .torrent file", parrent, gtk.FILE_CHOOSER_ACTION_OPEN,
-//			"Open", gtk.RESPONSE_ACCEPT)
-//	if err != nil {
-//		log.Fatal("Unable to create dialog:", err)
-//	}
-//	filter, _ := gtk.FileFilterNew()
-//	filter.SetName("Torrent (.torrent)")
-//	filter.AddPattern("*.torrent")
-//	dialog.AddFilter(filter)
-//	return dialog
-//}
-
 func createToolBar() (bar *gtk.Toolbar, err error) {
 
 	bar, err = gtk.ToolbarNew()
@@ -155,6 +142,8 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 		return nil, err
 	}
 
+	//var metadata *torrent.Metadata
+
 	_, err = btnAdd.Connect("clicked", func() {
 
 		dialog, _ := gtk.DialogNew()
@@ -167,6 +156,8 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 			log.Fatal(err)
 		}
 
+		box.SetBorderWidth(8)
+
 		fileChooserLabel, err := gtk.LabelNew("Torrent file:")
 		if err != nil {
 			log.Fatal(err)
@@ -178,6 +169,8 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		fileChooserBtn.SetHExpand(true)
 
 		filter, err := gtk.FileFilterNew()
 		if err != nil {
@@ -201,6 +194,8 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 			log.Fatal(err)
 		}
 
+		folderChooserBtn.SetHExpand(true)
+
 		view, err := gtk.TreeViewNew()
 		if err != nil {
 			log.Fatal(err)
@@ -216,11 +211,15 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 
 		view.SetModel(store)
 
-		iter := addRow(store, "test_folder", 512)
-		addSubRow(store, iter, "test_file_1", 128)
-		addSubRow(store, iter, "test_file_2", 128)
-		addSubRow(store, iter, "test_file_2", 128)
-		addSubRow(store, iter, "test_file_3_with very long name", 128)
+		view.SetHExpand(true)
+		view.SetVExpand(true)
+
+		scrolledWindow, err := gtk.ScrolledWindowNew(nil, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		scrolledWindow.Add(view)
 
 		grid, err := gtk.GridNew()
 		if err != nil {
@@ -234,9 +233,43 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 		grid.Attach(fileChooserBtn, 1, 0, 1, 1)
 		grid.Attach(folderChooserLabel, 0, 1, 1, 1)
 		grid.Attach(folderChooserBtn, 1, 1, 1, 1)
-		grid.Attach(view, 0, 2, 2, 1)
+		grid.Attach(scrolledWindow, 0, 2, 2, 1)
+		grid.SetHExpand(true)
+		grid.SetVExpand(true)
 
 		box.Add(grid)
+
+		_, _ = fileChooserBtn.Connect("file-set", func(button *gtk.FileChooserButton) {
+			metadata, err := torrent.ReadMetadata(button.GetFilename())
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			iter := addRow(store, metadata.Info.Name, metadata.Info.TotalLength)
+
+			iters := make(map[string]*gtk.TreeIter)
+			lengths := make(map[string]int64)
+
+			for _, fileInfo := range metadata.Info.Files {
+
+				fullPath := ""
+				parentIter := iter
+
+				for _, pathPart := range fileInfo.Path {
+
+					fullPath = path.Join(fullPath, pathPart)
+
+					lengths[fullPath] = lengths[fullPath] + fileInfo.Length
+
+					if _, ok := iters[fullPath]; !ok {
+						iters[fullPath] = addSubRow(store, parentIter, pathPart, lengths[fullPath])
+					}
+
+					parentIter = iters[fullPath]
+				}
+			}
+
+		})
 
 		dialog.ShowAll()
 		dialog.Run()
