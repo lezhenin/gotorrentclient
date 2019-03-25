@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/lezhenin/gotorrentclient/torrent"
@@ -14,6 +16,13 @@ const (
 	COLUMN_LENGTH
 )
 
+var downloadList []*torrent.Download
+var metadata *torrent.Metadata
+var folder string
+var fileChoosen bool
+var folderChoosen bool
+var listBox *gtk.ListBox
+
 func main() {
 
 	////filename := "/home/iurii/Downloads/[rutor.is]Two_Steps_From_Hell_-_Dragon_2019.torrent"
@@ -23,7 +32,7 @@ func main() {
 	////filename := "/home/iurii/Downloads/[rutor.is]Dr._Folder_2.6.7.9.torrent"
 	//filename := "/home/iurii/Downloads/[rutor.is]The.Prodigy-No.Tourists.torrent"
 	////filename := "/home/iurii/Downloads/[rutor.is]Black_Sabbath__13_Best_Buy_AIO_Deluxe_Edition_M.torrent"
-	////_, err := metadata.ReadMetadata(filename)
+	////_, err := metadata.NewMetadata(filename)
 	////if err != nil {
 	////	panic(err)
 	////}
@@ -44,6 +53,23 @@ func main() {
 	//return
 
 	gtk.Init(nil)
+
+	provider, err := gtk.CssProviderNew()
+	if err != nil {
+		log.Fatal("Unable to create css provider:", err)
+	}
+
+	err = provider.LoadFromData("progress, trough { min-height: 16px; }")
+	if err != nil {
+		log.Fatal("Unable to load from path:", err)
+	}
+
+	screen, err := gdk.ScreenGetDefault()
+	if err != nil {
+		log.Fatal("Unable to get default screen:", err)
+	}
+
+	gtk.AddProviderForScreen(screen, provider, gtk.STYLE_PROVIDER_PRIORITY_USER)
 
 	// Create a new toplevel window, set its title, and connect it to the
 	// "destroy" signal to exit the GTK main loop when it is destroyed.
@@ -66,14 +92,12 @@ func main() {
 
 	box.Add(bar)
 
-	// Create a new label widget to show in the window.
-	l, err := gtk.LabelNew("Hello, gotk3!")
+	listBox, err = gtk.ListBoxNew()
 	if err != nil {
-		log.Fatal("Unable to create label:", err)
+		log.Fatal("Unable to create list box:", err)
 	}
 
-	// Add the label to the window.
-	box.Add(l)
+	box.Add(listBox)
 
 	win.Add(box)
 
@@ -241,7 +265,7 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 		box.Add(grid)
 
 		_, _ = fileChooserBtn.Connect("file-set", func(button *gtk.FileChooserButton) {
-			metadata, err := torrent.ReadMetadata(button.GetFilename())
+			metadata, err = torrent.NewMetadata(button.GetFilename())
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -270,10 +294,40 @@ func createToolBar() (bar *gtk.Toolbar, err error) {
 				}
 			}
 
+			fileChoosen = true
+
+			//if fileChoosen && folderChoosen {
+			//
+			//}
+
+		})
+
+		_, _ = folderChooserBtn.Connect("file-set", func(button *gtk.FileChooserButton) {
+
+			folder = button.GetFilename()
+
 		})
 
 		dialog.ShowAll()
-		dialog.Run()
+		response := dialog.Run()
+		if response == gtk.RESPONSE_ACCEPT {
+			fmt.Println("accept")
+
+			fmt.Println(metadata.FileName)
+
+			download, err := torrent.NewDownload(metadata, folder)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			downloadList = append(downloadList, download)
+			addListRow(listBox, download)
+			download.Start()
+			fmt.Println("START")
+
+		}
+
+		dialog.Close()
 
 	})
 
@@ -350,4 +404,97 @@ func addSubRow(treeStore *gtk.TreeStore, parentIter *gtk.TreeIter, filename stri
 	}
 
 	return iter
+}
+
+func addListRow(listBox *gtk.ListBox, download *torrent.Download) {
+
+	listRow, err := gtk.ListBoxRowNew()
+	if err != nil {
+		log.Fatal("Unable to create list box row:", err)
+	}
+
+	grid, err := gtk.GridNew()
+	if err != nil {
+		log.Fatal("Unable to create grid:", err)
+	}
+
+	grid.SetRowSpacing(4)
+	grid.SetColumnSpacing(8)
+	grid.SetBorderWidth(8)
+
+	progressBar, err := gtk.ProgressBarNew()
+	if err != nil {
+		log.Fatal("Unable to create progress bar:", err)
+	}
+
+	progressBar.SetHExpand(true)
+
+	progressBar.SetMarginBottom(0)
+	progressBar.SetMarginTop(0)
+
+	_, name := path.Split(download.Metadata.FileName)
+	nameLabel, err := gtk.LabelNew(name)
+	if err != nil {
+		log.Fatal("Unable to create name label:", err)
+	}
+
+	nameLabel.SetHAlign(gtk.ALIGN_START)
+
+	stateLabel, err := gtk.LabelNew("Started")
+	if err != nil {
+		log.Fatal("Unable to create state label:", err)
+	}
+
+	stateLabel.SetHAlign(gtk.ALIGN_END)
+
+	speedLabel, err := gtk.LabelNew("0 MiB/sec")
+	speedLabel.SetHAlign(gtk.ALIGN_END)
+
+	grid.Attach(nameLabel, 0, 0, 1, 1)
+	grid.Attach(stateLabel, 1, 0, 1, 1)
+	grid.Attach(progressBar, 0, 1, 2, 1)
+	grid.Attach(speedLabel, 1, 2, 1, 1)
+
+	listRow.Add(grid)
+
+	lastDownloaded := float64(0)
+
+	_, err = glib.TimeoutAdd(1000, func() bool {
+
+		total := float64(download.Metadata.Info.TotalLength)
+		downloaded := float64(download.State.Downloaded())
+		fraction := downloaded / total
+
+		finished := math.Abs(fraction-1) < 1e-12
+
+		progressBar.SetFraction(fraction)
+
+		speed := (downloaded - lastDownloaded) / (1024.0 * 1024.0)
+		if finished {
+			speed = 0
+			stateLabel.SetText("Finished")
+		}
+
+		speedLabel.SetText(
+			fmt.Sprintf("%.2f of %.2f MiB (%.2f MiB/sec)",
+				downloaded/float64(1024*1024),
+				total/float64(1024*1024),
+				speed))
+
+		lastDownloaded = downloaded
+
+		fmt.Println("TIMER", fraction, speed)
+
+		return !finished
+	})
+
+	if err != nil {
+		log.Fatal("Unable to create star:", err)
+	}
+
+	listBox.Insert(listRow, 0)
+	fmt.Println("insert")
+
+	listBox.ShowAll()
+
 }
