@@ -151,6 +151,11 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 		return err
 	}
 
+	if bytes.Compare(seeder.PeerId, m.peerId) == 0 {
+		seeder.Close()
+		return nil
+	}
+
 	m.addSeeder(seeder)
 
 	seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
