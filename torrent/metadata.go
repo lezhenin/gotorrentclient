@@ -35,6 +35,7 @@ type Metadata struct {
 	Comment      string
 	CreatedBy    string
 	Encoding     string
+	FileName     string
 }
 
 type DecodeError struct {
@@ -276,7 +277,7 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 	return metadata, nil
 }
 
-func ReadMetadata(filename string) (metadata Metadata, err error) {
+func NewMetadata(filename string) (metadata *Metadata, err error) {
 
 	log.Printf("Read metadata from %s\n", filename)
 
@@ -297,10 +298,13 @@ func ReadMetadata(filename string) (metadata Metadata, err error) {
 		panic(ok)
 	}
 
-	metadata, err = metadataDictToStruct(metadataDict)
+	metadata = new(Metadata)
+	*metadata, err = metadataDictToStruct(metadataDict)
 	if err != nil {
-		return Metadata{}, err
+		return nil, err
 	}
+
+	metadata.FileName = filename
 
 	log.Printf("Metadata was read successfully:"+
 		" files count = %d, piece count = %d, total length = %d\n",

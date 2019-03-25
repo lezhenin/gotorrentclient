@@ -12,7 +12,7 @@ import (
 const blockLength int = 16 * 1024
 
 type Download struct {
-	Metadata     Metadata
+	Metadata     *Metadata
 	PeerId       []byte
 	InfoHash     []byte
 	Port         uint16
@@ -20,7 +20,7 @@ type Download struct {
 	ClientIP     string
 	DownloadPath string
 
-	state   *State
+	State   *State
 	manager *Manager
 	tracker *Tracker
 	storage *Storage
@@ -149,23 +149,18 @@ func (d *Download) announce(event Event) {
 
 	d.tracker.announceRequestChannel <- AnnounceRequest{
 		event,
-		d.state.Downloaded(),
-		d.state.Uploaded(),
-		d.state.Left(),
+		d.State.Downloaded(),
+		d.State.Uploaded(),
+		d.State.Left(),
 		8861,
 		50}
 }
 
-func NewDownload(torrentFilePath string, downloadPath string) (d *Download, err error) {
-
-	log.Printf("Create new download from %s", torrentFilePath)
+func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err error) {
 
 	d = new(Download)
 
-	d.Metadata, err = ReadMetadata(torrentFilePath)
-	if err != nil {
-		return nil, err
-	}
+	d.Metadata = metadata
 
 	if d.Metadata.Info.PieceLength%int64(blockLength) != 0 {
 		panic("Unexpected piece length")
@@ -179,14 +174,14 @@ func NewDownload(torrentFilePath string, downloadPath string) (d *Download, err 
 		panic(err)
 	}
 
-	d.state = NewState(uint64(d.Metadata.Info.TotalLength), uint(d.Metadata.Info.PieceCount))
+	d.State = NewState(uint64(d.Metadata.Info.TotalLength), uint(d.Metadata.Info.PieceCount))
 
 	d.storage, err = NewStorage(d.Metadata.Info, downloadPath)
 	if err != nil {
 		return nil, err
 	}
 
-	d.manager = NewManager(d.PeerId, d.InfoHash, &d.Metadata.Info, d.state, d.storage)
+	d.manager = NewManager(d.PeerId, d.InfoHash, &d.Metadata.Info, d.State, d.storage)
 	if err != nil {
 		return nil, err
 	}
