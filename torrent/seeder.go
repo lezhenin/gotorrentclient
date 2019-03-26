@@ -208,6 +208,9 @@ func (s *Seeder) writeRoutine() {
 
 func (s *Seeder) Close() {
 
+	if s.keepAliveTimer != nil {
+		s.keepAliveTimer.Stop()
+	}
 	close(s.outcoming)
 	_ = s.connection.Close()
 

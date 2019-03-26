@@ -116,8 +116,10 @@ func (m *Manager) Start() {
 					seeder.Close()
 					m.deleteSeeder(seeder.PeerId)
 				}
+				log.Println("debug", m.downloadingBlockBitfield.Length())
 				m.downloadingBlockBitfield =
 					bitfield.And(m.downloadingBlockBitfield, m.downloadedBlockBitfield)
+				log.Println("debug", m.downloadingBlockBitfield.Length())
 				return
 
 			}
@@ -156,9 +158,19 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 		return nil
 	}
 
+	for _, connectedSeeder := range m.getSeederSlice() {
+		if bytes.Compare(seeder.PeerId, connectedSeeder.PeerId) == 0 {
+			seeder.Close()
+			return nil
+		}
+	}
+
 	m.addSeeder(seeder)
 
-	seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
+	if m.state.Downloaded() > 0 {
+		seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
+	}
+
 	seeder.Run()
 
 	return nil
@@ -328,6 +340,7 @@ func (m *Manager) expressInterest(seeder *Seeder) {
 
 	if interestedPieceCount > 0 && seeder.AmInterested == false {
 		seeder.AmInterested = true
+		log.Println("DEBUG EXPRESS INTERESTED:", interestedPieceCount)
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
 	} else if seeder.AmInterested == true {
@@ -339,20 +352,30 @@ func (m *Manager) expressInterest(seeder *Seeder) {
 
 func (m *Manager) handleError(seeder *Seeder) {
 
-	index, ok := m.lastRequestedBlock[string(seeder.PeerId)]
-	if ok && m.downloadedBlockBitfield.Get(uint(index)) == 0 {
-		m.downloadingBlockBitfield.Clear(uint(index))
-	}
+	log.Println("DEBUG ERROR:", seeder.PeerId)
 
-	for _, anotherSeeder := range m.getSeederSlice() {
-		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(index)) == 1 {
-			seeder.outcoming <- Message{Interested, nil, m.peerId}
-			m.interestingPeerCount += 1
-		}
-	}
+	index, ok := m.lastRequestedBlock[string(seeder.PeerId)]
+
+	log.Println("DEBUG ERROR:", ok, index)
 
 	if seeder.AmInterested == true {
 		m.interestingPeerCount -= 1
+	}
+
+	seeder.Close()
+
+	if !ok || m.downloadedBlockBitfield.Get(uint(index)) == 1 {
+		return
+	}
+
+	m.downloadingBlockBitfield.Clear(uint(index))
+
+	for _, anotherSeeder := range m.getSeederSlice() {
+		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(index)) == 1 {
+			log.Println("DEBUG ERROR INTERESTED:", anotherSeeder.PeerBitfield.Get(uint(index)))
+			anotherSeeder.outcoming <- Message{Interested, nil, m.peerId}
+			m.interestingPeerCount += 1
+		}
 	}
 
 }
@@ -362,6 +385,7 @@ func (m *Manager) handleBitfiedMessage(seeder *Seeder, payload []byte) {
 	seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(payload, uint(m.pieceCount))
 	interestedPieceCount := bitfield.AndNot(seeder.PeerBitfield, m.downloadedPieceBitfield).Count(1)
 	if interestedPieceCount > 0 && seeder.AmInterested == false {
+		log.Println("DEBUG BITFIELD INTERESTED:", interestedPieceCount)
 		seeder.AmInterested = true
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
@@ -378,6 +402,7 @@ func (m *Manager) handleHaveMessage(seeder *Seeder, payload []byte) {
 
 	seeder.PeerBitfield.Set(uint(pieceIndex))
 	if m.downloadedPieceBitfield.Get(uint(pieceIndex)) == 0 && seeder.AmInterested == false {
+		log.Println("DEBUG HAVE INTERESTED:", m.downloadedPieceBitfield.Get(uint(pieceIndex)))
 		seeder.AmInterested = true
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
@@ -435,7 +460,7 @@ func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
 	log.Printf("SEND PIECE")
 
 	data := make([]byte, length)
-	_, err := m.storage.ReadAt(data, int64(index)*m.pieceCount+int64(offset))
+	_, err := m.storage.ReadAt(data, int64(index)*m.info.PieceLength+int64(offset))
 	if err != nil {
 		log.Println(err)
 		return
@@ -474,7 +499,7 @@ func (m *Manager) handleMessage(message *Message) {
 	seeder, ok := m.getSeeder(message.PeerId)
 
 	if !ok {
-		log.Printf("Peer with id %v is not found. Ignore message.")
+		log.Printf("Peer with id %v is not found. Ignore message.", message.PeerId)
 		return
 	}
 
@@ -482,7 +507,7 @@ func (m *Manager) handleMessage(message *Message) {
 
 	case Error:
 		m.handleError(seeder)
-		m.deleteSeeder(message.PeerId)
+		m.deleteSeeder(seeder.PeerId)
 
 	case Bitfield:
 		m.handleBitfiedMessage(seeder, message.Payload)

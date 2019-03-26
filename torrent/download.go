@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -15,7 +16,7 @@ type Download struct {
 	Metadata     *Metadata
 	PeerId       []byte
 	InfoHash     []byte
-	Port         uint16
+	ListenPort   uint16
 	NoPeerId     bool
 	ClientIP     string
 	DownloadPath string
@@ -37,9 +38,23 @@ type Download struct {
 
 func (d *Download) Start() {
 
-	l, err := net.Listen("tcp", ":8861")
+	d.ListenPort = 8861
+
+	l, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(d.ListenPort), 10))
 	if err != nil {
-		fmt.Println("Error listening:", err.Error())
+		for i := 1; i < 10; i++ {
+			log.Println(err)
+			l, err = net.Listen("tcp", ":"+strconv.FormatInt(int64(int(d.ListenPort)+i), 10))
+			if err == nil {
+				d.ListenPort += uint16(i)
+				log.Printf("listen at port %d", d.ListenPort)
+				break
+			}
+		}
+	}
+
+	if err != nil {
+		fmt.Println("start:", err.Error())
 	} else {
 
 		go func() {
@@ -47,7 +62,8 @@ func (d *Download) Start() {
 				// Listen for an incoming connection.
 				conn, err := l.Accept()
 				if err != nil {
-					fmt.Println("Error accepting: ", err.Error())
+					fmt.Println("accept:", err.Error())
+					_ = conn.Close()
 					continue
 				}
 
@@ -55,7 +71,8 @@ func (d *Download) Start() {
 
 				err = d.manager.AddSeeder(conn, true)
 				if err != nil {
-					fmt.Println("Error accepting: ", err.Error())
+					fmt.Println("accept:", err.Error())
+					_ = conn.Close()
 					continue
 				}
 			}
@@ -152,7 +169,7 @@ func (d *Download) announce(event Event) {
 		d.State.Downloaded(),
 		d.State.Uploaded(),
 		d.State.Left(),
-		8861,
+		d.ListenPort,
 		50}
 }
 
