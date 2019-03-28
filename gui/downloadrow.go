@@ -5,7 +5,6 @@ import (
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/lezhenin/gotorrentclient/torrent"
-	"math"
 	"path"
 )
 
@@ -20,6 +19,8 @@ type DownloadRow struct {
 	speedLabel  *gtk.Label
 
 	lastDownloaded float64
+
+	//sync.Mutex
 }
 
 func NewDownloadRow(download *torrent.Download) (row *DownloadRow, err error) {
@@ -87,31 +88,48 @@ func (r *DownloadRow) onTimerTick() bool {
 	downloaded := float64(r.download.State.Downloaded())
 	fraction := downloaded / total
 
-	finished := math.Abs(fraction-1) < 1e-12
+	finished := r.download.State.Finished()
+	stopped := r.download.State.Stopped()
 
 	r.progressBar.SetFraction(fraction)
 
 	speed := (downloaded - r.lastDownloaded) / (1024.0 * 1024.0)
-	if finished {
-		speed = 0
-		r.stateLabel.SetText("Finished")
-	}
-
-	r.speedLabel.SetText(
-		fmt.Sprintf("%.2f of %.2f MiB (%.2f MiB/sec)",
-			downloaded/float64(1024*1024),
-			total/float64(1024*1024),
-			speed))
 
 	r.lastDownloaded = downloaded
 
+	progressText := fmt.Sprintf("%.2f of %.2f MiB",
+		downloaded/float64(1024*1024),
+		total/float64(1024*1024))
+
+	speedText := fmt.Sprintf("%.2f MiB/sec", speed)
+
+	if finished || stopped {
+		r.speedLabel.SetText(progressText)
+	} else {
+		r.speedLabel.SetText(fmt.Sprintf("%s (%s)",
+			progressText, speedText))
+	}
+
+	//todo
+	//if finished {
+	//	r.stateLabel.SetText("Finished")
+	//} else if stopped {
+	//	r.stateLabel.SetText("Stopped")
+	//}
+
 	fmt.Println("TIMER", fraction, speed)
 
-	return !finished
+	return !finished && !stopped
 
 }
 
 func (r *DownloadRow) Start() (err error) {
+
+	if !r.download.State.Stopped() {
+		return
+	}
+
+	r.stateLabel.SetText("Started")
 
 	_, err = glib.TimeoutAdd(1000, func() bool {
 		return r.onTimerTick()
@@ -124,4 +142,15 @@ func (r *DownloadRow) Start() (err error) {
 	r.download.Start()
 
 	return nil
+}
+
+func (r *DownloadRow) Stop() {
+
+	if r.download.State.Stopped() {
+		return
+	}
+
+	r.stateLabel.SetText("Stopped")
+
+	r.download.Stop()
 }

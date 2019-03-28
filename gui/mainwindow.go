@@ -9,8 +9,8 @@ import (
 
 type MainWindow struct {
 	gtk.ApplicationWindow
-
-	listBox *gtk.ListBox
+	listBox     *gtk.ListBox
+	downloadMap map[int]*DownloadRow
 }
 
 func NewMainWindow(application *gtk.Application) (window *MainWindow, err error) {
@@ -42,10 +42,14 @@ func NewMainWindow(application *gtk.Application) (window *MainWindow, err error)
 		log.Fatal(err)
 	}
 
+	window.listBox.SetSelectionMode(gtk.SELECTION_SINGLE)
+
 	box.Add(bar)
 	box.Add(window.listBox)
 
 	window.Add(box)
+
+	window.downloadMap = make(map[int]*DownloadRow)
 
 	return window, nil
 }
@@ -109,7 +113,31 @@ func (w *MainWindow) createToolBar() (bar *gtk.Toolbar, err error) {
 	})
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
+	}
+
+	_, err = btnRemove.Connect("clicked", func() {
+		w.onRemoveClicked()
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = btnStart.Connect("clicked", func() {
+		w.onStartClicked()
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = btnStop.Connect("clicked", func() {
+		w.onStopClicked()
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
 	bar.Add(btnAdd)
@@ -128,6 +156,7 @@ func (w *MainWindow) onAddClicked() {
 		log.Fatal(err)
 	}
 
+	dialog.SetModal(true)
 	dialog.SetDefaultSize(400, 400)
 	dialog.ShowAll()
 
@@ -153,11 +182,60 @@ func (w *MainWindow) onAddClicked() {
 	}
 
 	downloadRow, err := NewDownloadRow(download)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	w.listBox.Add(downloadRow)
 	w.listBox.ShowAll()
+
+	w.downloadMap[downloadRow.GetIndex()] = downloadRow
 
 	go func() {
 		err = downloadRow.Start()
 		log.Println(err)
 	}()
+}
+
+func (w *MainWindow) onRemoveClicked() {
+
+	row := w.listBox.GetSelectedRow()
+
+	if row == nil {
+		return
+	}
+
+	downloadRow := w.downloadMap[row.GetIndex()]
+	downloadRow.Stop()
+
+	delete(w.downloadMap, row.GetIndex())
+
+	w.listBox.Remove(row)
+
+}
+
+func (w *MainWindow) onStartClicked() {
+
+	row := w.listBox.GetSelectedRow()
+
+	if row == nil {
+		return
+	}
+
+	downloadRow := w.downloadMap[row.GetIndex()]
+	downloadRow.Start()
+
+}
+
+func (w *MainWindow) onStopClicked() {
+
+	row := w.listBox.GetSelectedRow()
+
+	if row == nil {
+		return
+	}
+
+	downloadRow := w.downloadMap[row.GetIndex()]
+	downloadRow.Stop()
+
 }
