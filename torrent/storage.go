@@ -1,7 +1,6 @@
 package torrent
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path"
@@ -85,7 +84,7 @@ func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 		}
 
 		if int64(n) != blockSize {
-			return 0, fmt.Errorf("read: block length != n")
+			panic("read: block length != n")
 		}
 
 		readBytes += blockSize
@@ -96,7 +95,7 @@ func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 	}
 
 	if leftBytes != 0 || readBytes != int64(len(b)) {
-		return 0, fmt.Errorf("read: left bytes != 0 or read bytes != length")
+		panic("read: left bytes != 0 or read bytes != length")
 	}
 
 	return int(readBytes), nil
@@ -131,7 +130,7 @@ func (s *Storage) WriteAt(b []byte, off int64) (n int, err error) {
 		}
 
 		if int64(n) != blockSize {
-			return 0, fmt.Errorf("write: block length != n")
+			panic("write: block length != n")
 		}
 
 		wroteBytes += blockSize
@@ -142,7 +141,7 @@ func (s *Storage) WriteAt(b []byte, off int64) (n int, err error) {
 	}
 
 	if leftBytes != 0 || wroteBytes != int64(len(b)) {
-		return 0, fmt.Errorf("write: left bytes != 0 or read bytes != length")
+		panic("write: left bytes != 0 or read bytes != length")
 	}
 
 	return int(wroteBytes), nil
