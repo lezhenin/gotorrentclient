@@ -17,8 +17,6 @@ const protocolId string = "BitTorrent protocol"
 const handshakeTimeout = 15
 const requestTimeout = 15
 
-const keepAliveTimeout = 120
-
 const bufferSize = blockLength + 512
 const messageBufferLength = 16
 
@@ -71,14 +69,11 @@ type Seeder struct {
 
 	incoming  chan Message
 	outcoming chan Message
-	errors    chan SeederError
 
-	keepAlive      bool
-	keepAliveTimer *time.Timer
-
-	closeGroup sync.WaitGroup
-	closeOnce  sync.Once
-	closeChan  chan struct{}
+	closeGroup          sync.WaitGroup
+	closeConnectionOnce sync.Once
+	closeChannelsOnce   sync.Once
+	closeChan           chan struct{}
 }
 
 func (s *Seeder) Accept(connection net.Conn) (err error) {
@@ -143,44 +138,51 @@ func (s *Seeder) Init(connection net.Conn) (err error) {
 
 func (s *Seeder) Run() {
 
-	s.keepAliveTimer = time.NewTimer(time.Second * keepAliveTimeout)
+	s.closeGroup.Add(2)
 
-	s.closeGroup.Add(3)
+	go func() {
+		s.read()
+		s.closeConnectionOnce.Do(s.closeConnection)
+		s.closeGroup.Done()
+	}()
 
-	go s.keepAliveRoutine()
-	go s.readRoutine()
-	go s.writeRoutine()
+	go func() {
+		s.write()
+		s.closeConnectionOnce.Do(s.closeConnection)
+		s.closeGroup.Done()
+	}()
 
+	s.closeGroup.Wait()
 }
 
-func (s *Seeder) keepAliveRoutine() {
+func (s *Seeder) Close() {
 
-	defer s.closeGroup.Done()
-
-	for {
-		select {
-		case <-s.keepAliveTimer.C:
-			s.outcoming <- Message{KeepAlive, nil, s.MyPeerId}
-			s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
-		case <-s.closeChan:
-			return
-		}
-	}
-
+	s.closeConnectionOnce.Do(s.closeConnection)
+	s.closeGroup.Wait()
+	s.closeChannelsOnce.Do(s.closeChannels)
 }
 
-func (s *Seeder) readRoutine() {
+func (s *Seeder) closeChannels() {
 
-	defer s.closeGroup.Done()
-	defer s.closeOnce.Do(s.close)
+	close(s.closeChan)
+	close(s.outcoming)
+}
+
+func (s *Seeder) closeConnection() {
+
+	s.closeChan <- struct{}{}
+	s.closeChan <- struct{}{}
+
+	_ = s.connection.Close()
+}
+
+func (s *Seeder) read() {
 
 	for {
 
 		id, payload, err := readMessage(s.connection)
-
 		if err != nil {
 			log.Println(err)
-			s.errors <- SeederError{err, s.PeerId}
 			return
 		}
 
@@ -188,7 +190,6 @@ func (s *Seeder) readRoutine() {
 			err = s.connection.SetReadDeadline(time.Time{})
 			if err != nil {
 				log.Println(err)
-				s.errors <- SeederError{err, s.PeerId}
 				return
 			}
 		}
@@ -199,71 +200,34 @@ func (s *Seeder) readRoutine() {
 		case <-s.closeChan:
 			return
 		}
-
 	}
-
 }
 
-func (s *Seeder) writeRoutine() {
-
-	defer s.closeGroup.Done()
-	defer s.closeOnce.Do(s.close)
+func (s *Seeder) write() {
 
 	for {
-
 		select {
 		case message := <-s.outcoming:
 
 			if message.Id == Request {
 				err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
 				if err != nil {
-					log.Println(err)
-					s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 					return
 				}
 			}
 
 			err := writeMessage(s.connection, message.Id, message.Payload)
 			if err != nil {
-				log.Println(err)
-				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 				return
 			}
-
-			s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
 
 		case <-s.closeChan:
 			return
 		}
-
 	}
-
 }
 
-func (s *Seeder) close() {
-
-	if s.keepAliveTimer != nil {
-		s.keepAliveTimer.Stop()
-	}
-
-	s.closeChan <- struct{}{}
-	s.closeChan <- struct{}{}
-	s.closeChan <- struct{}{}
-
-	_ = s.connection.Close()
-}
-
-func (s *Seeder) Close() {
-
-	s.closeOnce.Do(s.close)
-	s.closeGroup.Wait()
-
-	close(s.closeChan)
-	close(s.outcoming)
-
-}
-
-func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message, errors chan SeederError) (seeder *Seeder, err error) {
+func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
 
 	seeder = new(Seeder)
 
@@ -278,12 +242,10 @@ func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message, errors cha
 
 	seeder.buffer = make([]byte, bufferSize)
 
-	seeder.errors = errors
-
 	seeder.incoming = incoming
 	seeder.outcoming = make(chan Message, messageBufferLength)
 
-	seeder.closeChan = make(chan struct{}, 3)
+	seeder.closeChan = make(chan struct{}, 2)
 
 	return seeder, nil
 

@@ -40,12 +40,14 @@ type Manager struct {
 
 	interestingPeerCount int
 
-	messages chan Message
-	errors   chan SeederError
+	receivedMessages chan Message
+	closedSeeders    chan *Seeder
 
 	stopped chan struct{}
 	Done    chan struct{}
 	Error   chan error
+
+	wait sync.WaitGroup
 }
 
 func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Storage) (m *Manager) {
@@ -60,7 +62,7 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	m.info = info
 
 	m.seedersMap = make(map[string]*Seeder)
-	m.messages = make(chan Message, 32)
+	m.receivedMessages = make(chan Message, 32)
 
 	m.blocksPerPiece = uint8(info.PieceLength / int64(blockLength))
 	m.pieceCount = info.PieceCount
@@ -95,7 +97,7 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 
 	m.Done = make(chan struct{}, 1)
 	m.stopped = make(chan struct{}, 1)
-	m.errors = make(chan SeederError, 4)
+	m.closedSeeders = make(chan *Seeder, 4)
 
 	return m
 }
@@ -105,18 +107,20 @@ func (m *Manager) Start() {
 	log.Printf("Start download: piece length = %d, block length = %d, blocks per piece = %d",
 		m.info.PieceLength, blockLength, m.blocksPerPiece)
 
+	m.wait.Add(1)
+
 	go func() {
+
+		defer m.wait.Done()
 
 		for {
 
 			select {
 
-			case err := <-m.errors:
-				{
-					m.handleError(err)
-				}
+			case seeder := <-m.closedSeeders:
+				m.handleClosing(seeder)
 
-			case message := <-m.messages:
+			case message := <-m.receivedMessages:
 				m.handleMessage(&message)
 
 			case <-m.stopped:
@@ -125,15 +129,17 @@ func (m *Manager) Start() {
 					seeder.Close()
 					m.deleteSeeder(seeder.PeerId)
 				}
-				log.Println("debug", m.downloadingBlockBitfield.Length())
+
 				m.downloadingBlockBitfield =
 					bitfield.And(m.downloadingBlockBitfield, m.downloadedBlockBitfield)
-				log.Println("debug", m.downloadingBlockBitfield.Length())
+
 				return
 
 			}
 		}
 	}()
+
+	//m.wait.Wait()
 
 }
 
@@ -145,7 +151,7 @@ func (m *Manager) Stop() {
 
 func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 
-	seeder, err := NewSeeder(m.infoHash, m.peerId, m.messages, m.errors)
+	seeder, err := NewSeeder(m.infoHash, m.peerId, m.receivedMessages)
 	if err != nil {
 		return err
 	}
@@ -159,7 +165,6 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 	}
 
 	if err != nil {
-		println("Init err")
 		return err
 	}
 
@@ -181,7 +186,10 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 		seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
 	}
 
-	seeder.Run()
+	go func() {
+		seeder.Run()
+		m.closedSeeders <- seeder
+	}()
 
 	return nil
 
@@ -344,51 +352,36 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 	}
 }
 
-func (m *Manager) expressInterest(seeder *Seeder) {
-
-	interestedPieceCount := bitfield.AndNot(seeder.PeerBitfield, m.downloadedPieceBitfield).Count(1)
-
-	if interestedPieceCount > 0 && seeder.AmInterested == false {
-		seeder.AmInterested = true
-		log.Println("DEBUG EXPRESS INTERESTED:", interestedPieceCount)
-		seeder.outcoming <- Message{Interested, nil, m.peerId}
-		m.interestingPeerCount += 1
-	} else if seeder.AmInterested == true {
-		seeder.AmInterested = false
-		seeder.outcoming <- Message{NotInterested, nil, m.peerId}
-		m.interestingPeerCount -= 1
-	}
-}
-
-func (m *Manager) handleError(err SeederError) {
+func (m *Manager) handleClosing(seeder *Seeder) {
 
 	log.Println("HANDLE ERROR")
 
-	seeder, ok := m.getSeeder(err.PeerId)
+	seeder, ok := m.getSeeder(seeder.PeerId)
 	if !ok {
-		//todo
-		log.Println("PANIC SEEDER NOT FOUND")
 		return
+		panic("Seeder not found in seeder map after closing.")
 	}
-
-	seeder.Close()
 
 	if seeder.AmInterested == true {
 		m.interestingPeerCount -= 1
 	}
 
-	m.deleteSeeder(err.PeerId)
+	seeder.Close()
 
-	index, ok := m.lastRequestedBlock[string(err.PeerId)]
+	m.deleteSeeder(seeder.PeerId)
 
-	if !ok || m.downloadedBlockBitfield.Get(uint(index)) == 1 {
+	blockIndex, ok := m.lastRequestedBlock[string(seeder.PeerId)]
+
+	if !ok || m.downloadedBlockBitfield.Get(uint(blockIndex)) == 1 {
 		return
 	}
 
-	m.downloadingBlockBitfield.Clear(uint(index))
+	m.downloadingBlockBitfield.Clear(uint(blockIndex))
+
+	pieceIndex, _ := m.convertGlobalBlockToPieceIndex(int64(blockIndex))
 
 	for _, anotherSeeder := range m.getSeederSlice() {
-		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(index)) == 1 {
+		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(pieceIndex)) == 1 {
 			anotherSeeder.outcoming <- Message{Interested, nil, m.peerId}
 			m.interestingPeerCount += 1
 		}
@@ -522,7 +515,7 @@ func (m *Manager) handleMessage(message *Message) {
 	switch message.Id {
 
 	//case Error:
-	//	m.handleError(seeder)
+	//	m.handleClosing(seeder)
 	//	m.deleteSeeder(seeder.PeerId)
 
 	case Bitfield:
