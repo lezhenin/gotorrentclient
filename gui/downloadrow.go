@@ -110,13 +110,6 @@ func (r *DownloadRow) onTimerTick() bool {
 			progressText, speedText))
 	}
 
-	//todo
-	//if finished {
-	//	r.stateLabel.SetText("Finished")
-	//} else if stopped {
-	//	r.stateLabel.SetText("Stopped")
-	//}
-
 	fmt.Println("TIMER", fraction, speed)
 
 	return !finished && !stopped
@@ -139,7 +132,9 @@ func (r *DownloadRow) Start() (err error) {
 		return err
 	}
 
-	r.download.Start()
+	go func() {
+		r.download.Start()
+	}()
 
 	return nil
 }

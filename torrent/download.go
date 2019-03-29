@@ -2,11 +2,10 @@ package torrent
 
 import (
 	"crypto/rand"
-	"fmt"
 	"log"
 	"net"
 	"net/url"
-	"strconv"
+	"sync"
 	"time"
 )
 
@@ -34,6 +33,8 @@ type Download struct {
 	completed bool
 
 	announceTimer *time.Timer
+
+	wait sync.WaitGroup
 }
 
 func (d *Download) Start() {
@@ -44,49 +45,24 @@ func (d *Download) Start() {
 
 	d.State.SetStopped(false)
 
-	d.ListenPort = 8861
-
-	l, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(d.ListenPort), 10))
+	listener, err := NewListener(8861, 8871)
 	if err != nil {
-		for i := 1; i < 10; i++ {
-			log.Println(err)
-			l, err = net.Listen("tcp", ":"+strconv.FormatInt(int64(int(d.ListenPort)+i), 10))
-			if err == nil {
-				d.ListenPort += uint16(i)
-				log.Printf("listen at port %d", d.ListenPort)
-				break
-			}
-		}
-	}
-
-	if err != nil {
-		fmt.Println("start:", err.Error())
-	} else {
-
-		go func() {
-			for !d.State.Stopped() {
-				// Listen for an incoming connection.
-				conn, err := l.Accept()
-				if err != nil {
-					fmt.Println("accept:", err.Error())
-					_ = conn.Close()
-					continue
-				}
-
-				log.Printf("ACCEPT")
-
-				err = d.manager.AddSeeder(conn, true)
-				if err != nil {
-					fmt.Println("accept:", err.Error())
-					_ = conn.Close()
-					continue
-				}
-			}
-
-		}()
+		//todo
+		panic(err)
 	}
 
 	go func() {
+		d.wait.Add(1)
+		defer d.wait.Done()
+		err = listener.Start()
+		log.Println(err)
+	}()
+
+	go func() {
+
+		d.wait.Add(1)
+		defer d.wait.Done()
+
 		for !d.State.Stopped() {
 
 			select {
@@ -137,10 +113,8 @@ func (d *Download) Start() {
 
 				log.Printf("OUT")
 
-			case err := <-d.tracker.errorChannel:
-				d.Errors <- err
-				panic(err) //todo
-				return
+			case conn := <-listener.Connections:
+				_ = d.manager.AddSeeder(conn, true)
 
 			case <-d.manager.Done:
 				d.completed = true
@@ -160,8 +134,12 @@ func (d *Download) Start() {
 	d.announce(Started, 100)
 
 	go func() {
+		d.wait.Add(1)
+		defer d.wait.Done()
 		d.manager.Start()
 	}()
+
+	d.wait.Wait()
 
 }
 

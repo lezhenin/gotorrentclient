@@ -3,13 +3,16 @@ package torrent
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
 type Listener struct {
-	port     int
+	Port        int
+	Connections chan net.Conn
+
 	listener net.Listener
 
-	Connections chan net.Conn
+	wait sync.WaitGroup
 }
 
 func NewListener(portRangeStart, portRangeEnd int) (listener *Listener, err error) {
@@ -17,9 +20,9 @@ func NewListener(portRangeStart, portRangeEnd int) (listener *Listener, err erro
 	listener = new(Listener)
 
 	for port := portRangeStart; port < portRangeEnd; port++ {
-		listener.port = port
-		listener.listener, err = net.Listen("tcp", fmt.Sprintf(":%d", listener.port))
+		listener.listener, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err == nil {
+			listener.Port = port
 			break
 		}
 	}
@@ -36,6 +39,9 @@ func NewListener(portRangeStart, portRangeEnd int) (listener *Listener, err erro
 
 func (l *Listener) Start() (err error) {
 
+	l.wait.Add(1)
+	defer l.wait.Done()
+
 	for {
 
 		conn, err := l.listener.Accept()
@@ -48,8 +54,8 @@ func (l *Listener) Start() (err error) {
 	}
 }
 
-func (l *Listener) Stop() {
+func (l *Listener) Close() {
 
 	_ = l.listener.Close()
-
+	l.wait.Wait()
 }
