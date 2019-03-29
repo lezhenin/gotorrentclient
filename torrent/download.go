@@ -138,10 +138,10 @@ func (d *Download) Start() {
 				panic(err) //todo
 				return
 
-			case err := <-d.manager.errors:
-				d.Errors <- err
-				panic(err) //todo
-				return
+			//case err := <-d.manager.errors:
+			//	//d.Errors <- err
+			//	panic(err) //todo
+			//	return
 
 			case <-d.manager.Done:
 				d.completed = true

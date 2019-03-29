@@ -41,7 +41,7 @@ type Manager struct {
 	interestingPeerCount int
 
 	messages chan Message
-	errors   chan error
+	errors   chan SeederError
 
 	stopped chan struct{}
 	Done    chan struct{}
@@ -87,6 +87,7 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	for index := range m.pieceDownloadProgress {
 		m.pieceDownloadProgress[index] = m.blocksPerPiece
 	}
+
 	m.pieceDownloadProgress[m.pieceCount-1] = m.blocksPerLastPiece
 
 	log.Printf("m was created successfully: peer id = %v", m.peerId)
@@ -94,6 +95,7 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 
 	m.Done = make(chan struct{}, 1)
 	m.stopped = make(chan struct{}, 1)
+	m.errors = make(chan SeederError, 4)
 
 	return m
 }
@@ -108,6 +110,11 @@ func (m *Manager) Start() {
 		for {
 
 			select {
+
+			case err := <-m.errors:
+				{
+					m.handleError(err)
+				}
 
 			case message := <-m.messages:
 				m.handleMessage(&message)
@@ -138,7 +145,7 @@ func (m *Manager) Stop() {
 
 func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 
-	seeder, err := NewSeeder(m.infoHash, m.peerId, m.messages)
+	seeder, err := NewSeeder(m.infoHash, m.peerId, m.messages, m.errors)
 	if err != nil {
 		return err
 	}
@@ -152,6 +159,7 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 	}
 
 	if err != nil {
+		println("Init err")
 		return err
 	}
 
@@ -352,19 +360,26 @@ func (m *Manager) expressInterest(seeder *Seeder) {
 	}
 }
 
-func (m *Manager) handleError(seeder *Seeder) {
+func (m *Manager) handleError(err SeederError) {
 
-	log.Println("DEBUG ERROR:", seeder.PeerId)
+	log.Println("HANDLE ERROR")
 
-	index, ok := m.lastRequestedBlock[string(seeder.PeerId)]
+	seeder, ok := m.getSeeder(err.PeerId)
+	if !ok {
+		//todo
+		log.Println("PANIC SEEDER NOT FOUND")
+		return
+	}
 
-	log.Println("DEBUG ERROR:", ok, index)
+	seeder.Close()
 
 	if seeder.AmInterested == true {
 		m.interestingPeerCount -= 1
 	}
 
-	seeder.Close()
+	m.deleteSeeder(err.PeerId)
+
+	index, ok := m.lastRequestedBlock[string(err.PeerId)]
 
 	if !ok || m.downloadedBlockBitfield.Get(uint(index)) == 1 {
 		return
@@ -374,7 +389,6 @@ func (m *Manager) handleError(seeder *Seeder) {
 
 	for _, anotherSeeder := range m.getSeederSlice() {
 		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(index)) == 1 {
-			log.Println("DEBUG ERROR INTERESTED:", anotherSeeder.PeerBitfield.Get(uint(index)))
 			anotherSeeder.outcoming <- Message{Interested, nil, m.peerId}
 			m.interestingPeerCount += 1
 		}
@@ -507,9 +521,9 @@ func (m *Manager) handleMessage(message *Message) {
 
 	switch message.Id {
 
-	case Error:
-		m.handleError(seeder)
-		m.deleteSeeder(seeder.PeerId)
+	//case Error:
+	//	m.handleError(seeder)
+	//	m.deleteSeeder(seeder.PeerId)
 
 	case Bitfield:
 		m.handleBitfiedMessage(seeder, message.Payload)

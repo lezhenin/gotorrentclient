@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -43,22 +44,26 @@ type Message struct {
 	PeerId  []byte
 }
 
+type SeederError struct {
+	err    error
+	PeerId []byte
+}
+
+func (e *SeederError) Error() string {
+	return fmt.Sprintf("seeder %v: %s", e.PeerId, e.err.Error())
+}
+
 type Seeder struct {
-	NetAddress net.Addr
-
-	Complete bool
-
 	AmChoking      bool
 	AmInterested   bool
 	PeerChoking    bool
 	PeerInterested bool
 
 	PeerBitfield *bitfield.Bitfield
-	MyBitfield   *bitfield.Bitfield
 
-	PeerId []byte
-
+	PeerId   []byte
 	MyPeerId []byte
+
 	InfoHash []byte
 
 	connection net.Conn
@@ -66,9 +71,14 @@ type Seeder struct {
 
 	incoming  chan Message
 	outcoming chan Message
+	errors    chan SeederError
 
 	keepAlive      bool
 	keepAliveTimer *time.Timer
+
+	closeGroup sync.WaitGroup
+	closeOnce  sync.Once
+	closeChan  chan struct{}
 }
 
 func (s *Seeder) Accept(connection net.Conn) (err error) {
@@ -135,6 +145,8 @@ func (s *Seeder) Run() {
 
 	s.keepAliveTimer = time.NewTimer(time.Second * keepAliveTimeout)
 
+	s.closeGroup.Add(3)
+
 	go s.keepAliveRoutine()
 	go s.readRoutine()
 	go s.writeRoutine()
@@ -143,17 +155,24 @@ func (s *Seeder) Run() {
 
 func (s *Seeder) keepAliveRoutine() {
 
+	defer s.closeGroup.Done()
+
 	for {
-
-		<-s.keepAliveTimer.C
-		s.outcoming <- Message{KeepAlive, nil, s.MyPeerId}
-		s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
-
+		select {
+		case <-s.keepAliveTimer.C:
+			s.outcoming <- Message{KeepAlive, nil, s.MyPeerId}
+			s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
+		case <-s.closeChan:
+			return
+		}
 	}
 
 }
 
 func (s *Seeder) readRoutine() {
+
+	defer s.closeGroup.Done()
+	defer s.closeOnce.Do(s.close)
 
 	for {
 
@@ -161,7 +180,7 @@ func (s *Seeder) readRoutine() {
 
 		if err != nil {
 			log.Println(err)
-			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+			s.errors <- SeederError{err, s.PeerId}
 			return
 		}
 
@@ -169,54 +188,82 @@ func (s *Seeder) readRoutine() {
 			err = s.connection.SetReadDeadline(time.Time{})
 			if err != nil {
 				log.Println(err)
-				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+				s.errors <- SeederError{err, s.PeerId}
 				return
 			}
 		}
 
-		s.incoming <- Message{id, payload, s.PeerId}
+		select {
+		case s.incoming <- Message{id, payload, s.PeerId}:
+			continue
+		case <-s.closeChan:
+			return
+		}
 
 	}
+
 }
 
 func (s *Seeder) writeRoutine() {
 
+	defer s.closeGroup.Done()
+	defer s.closeOnce.Do(s.close)
+
 	for {
 
-		message := <-s.outcoming
+		select {
+		case message := <-s.outcoming:
 
-		if message.Id == Request {
-			err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
+			if message.Id == Request {
+				err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
+				if err != nil {
+					log.Println(err)
+					s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+					return
+				}
+			}
+
+			err := writeMessage(s.connection, message.Id, message.Payload)
 			if err != nil {
 				log.Println(err)
 				s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
 				return
 			}
-		}
 
-		err := writeMessage(s.connection, message.Id, message.Payload)
-		if err != nil {
-			log.Println(err)
-			s.incoming <- Message{Error, []byte(err.Error()), s.PeerId}
+			s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
+
+		case <-s.closeChan:
 			return
 		}
 
-		s.keepAliveTimer.Reset(time.Second * keepAliveTimeout)
-
 	}
+
 }
 
-func (s *Seeder) Close() {
+func (s *Seeder) close() {
 
 	if s.keepAliveTimer != nil {
 		s.keepAliveTimer.Stop()
 	}
-	close(s.outcoming)
+
+	s.closeChan <- struct{}{}
+	s.closeChan <- struct{}{}
+	s.closeChan <- struct{}{}
+
 	_ = s.connection.Close()
+}
+
+func (s *Seeder) Close() {
+
+	s.closeOnce.Do(s.close)
+	s.closeGroup.Wait()
+
+	close(s.closeChan)
+	close(s.outcoming)
 
 }
 
-func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
+func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message, errors chan SeederError) (seeder *Seeder, err error) {
 
 	seeder = new(Seeder)
 
@@ -231,8 +278,12 @@ func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *S
 
 	seeder.buffer = make([]byte, bufferSize)
 
+	seeder.errors = errors
+
 	seeder.incoming = incoming
 	seeder.outcoming = make(chan Message, messageBufferLength)
+
+	seeder.closeChan = make(chan struct{}, 3)
 
 	return seeder, nil
 
