@@ -99,8 +99,12 @@ func (d *Download) Start() {
 					continue
 				}
 
-				// todo stop while connecting
+				// todo stopSignals while connecting
 				for _, peer := range response.Peers {
+
+					if d.State.Stopped() {
+						return
+					}
 
 					_, ok := d.peerStatus[peer]
 					if ok {
@@ -138,19 +142,14 @@ func (d *Download) Start() {
 				panic(err) //todo
 				return
 
-			//case err := <-d.manager.errors:
-			//	//d.Errors <- err
-			//	panic(err) //todo
-			//	return
-
 			case <-d.manager.Done:
 				d.completed = true
-				d.announce(Completed)
+				d.announce(Completed, 0)
 				d.State.SetFinished(true)
 				d.Done <- struct{}{}
 
 			case <-d.announceTimer.C:
-				d.announce(None)
+				d.announce(None, 50)
 			}
 
 		}
@@ -158,8 +157,11 @@ func (d *Download) Start() {
 	}()
 
 	d.tracker.Run()
-	d.announce(Started)
-	d.manager.Start()
+	d.announce(Started, 100)
+
+	go func() {
+		d.manager.Start()
+	}()
 
 }
 
@@ -170,12 +172,12 @@ func (d *Download) Stop() {
 	}
 
 	d.manager.Stop()
-	d.announce(Stopped)
+	d.announce(Stopped, 0)
 
 	d.State.SetStopped(true)
 }
 
-func (d *Download) announce(event Event) {
+func (d *Download) announce(event Event, peersCount uint32) {
 
 	d.tracker.announceRequestChannel <- AnnounceRequest{
 		event,
@@ -183,7 +185,7 @@ func (d *Download) announce(event Event) {
 		d.State.Uploaded(),
 		d.State.Left(),
 		d.ListenPort,
-		50}
+		peersCount}
 }
 
 func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err error) {

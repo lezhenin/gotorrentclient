@@ -43,11 +43,12 @@ type Manager struct {
 	receivedMessages chan Message
 	closedSeeders    chan *Seeder
 
-	stopped chan struct{}
-	Done    chan struct{}
-	Error   chan error
+	stopSignals chan struct{}
+	Done        chan struct{}
 
-	wait sync.WaitGroup
+	wait      sync.WaitGroup
+	stopMutex sync.Mutex
+	isStopped bool
 }
 
 func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Storage) (m *Manager) {
@@ -96,57 +97,11 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	log.Println(m.blocksPerPiece)
 
 	m.Done = make(chan struct{}, 1)
-	m.stopped = make(chan struct{}, 1)
+	m.stopSignals = make(chan struct{}, 1)
+
 	m.closedSeeders = make(chan *Seeder, 4)
 
 	return m
-}
-
-func (m *Manager) Start() {
-
-	log.Printf("Start download: piece length = %d, block length = %d, blocks per piece = %d",
-		m.info.PieceLength, blockLength, m.blocksPerPiece)
-
-	m.wait.Add(1)
-
-	go func() {
-
-		defer m.wait.Done()
-
-		for {
-
-			select {
-
-			case seeder := <-m.closedSeeders:
-				m.handleClosing(seeder)
-
-			case message := <-m.receivedMessages:
-				m.handleMessage(&message)
-
-			case <-m.stopped:
-				log.Println("STOPPED")
-				for _, seeder := range m.getSeederSlice() {
-					seeder.Close()
-					m.deleteSeeder(seeder.PeerId)
-				}
-
-				m.downloadingBlockBitfield =
-					bitfield.And(m.downloadingBlockBitfield, m.downloadedBlockBitfield)
-
-				return
-
-			}
-		}
-	}()
-
-	//m.wait.Wait()
-
-}
-
-func (m *Manager) Stop() {
-
-	m.stopped <- struct{}{}
-
 }
 
 func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
@@ -180,6 +135,15 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 		}
 	}
 
+	//todo
+	m.stopMutex.Lock()
+	defer m.stopMutex.Unlock()
+
+	if m.isStopped {
+		seeder.Close()
+		return
+	}
+
 	m.addSeeder(seeder)
 
 	if m.state.Downloaded() > 0 {
@@ -193,6 +157,139 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 
 	return nil
 
+}
+
+func (m *Manager) Start() {
+
+	log.Printf("Start download: piece length = %d, block length = %d, blocks per piece = %d",
+		m.info.PieceLength, blockLength, m.blocksPerPiece)
+
+	m.stopMutex.Lock()
+	m.isStopped = false
+	m.stopMutex.Unlock()
+
+	m.wait.Add(1)
+
+	go func() {
+
+		defer m.wait.Done()
+
+		for {
+
+			select {
+
+			case seeder := <-m.closedSeeders:
+				m.handleClosing(seeder)
+
+			case message := <-m.receivedMessages:
+				m.handleMessage(&message)
+
+			case <-m.stopSignals:
+				m.handleStopSignal()
+				return
+
+			}
+		}
+	}()
+
+	m.wait.Wait()
+
+}
+
+func (m *Manager) Stop() {
+
+	m.stopMutex.Lock()
+	defer m.stopMutex.Unlock()
+
+	m.isStopped = true
+
+	m.stopSignals <- struct{}{}
+
+}
+
+func (m *Manager) handleStopSignal() {
+
+	for _, seeder := range m.getSeederSlice() {
+		seeder.Close()
+		m.deleteSeeder(seeder.PeerId)
+	}
+
+	m.downloadingBlockBitfield =
+		bitfield.And(m.downloadingBlockBitfield, m.downloadedBlockBitfield)
+
+}
+
+func (m *Manager) handleClosing(seeder *Seeder) {
+
+	seeder, ok := m.getSeeder(seeder.PeerId)
+	if !ok {
+		return
+		panic("Seeder not found in seeder map after closing.")
+	}
+
+	if seeder.AmInterested == true {
+		m.interestingPeerCount -= 1
+	}
+
+	seeder.Close()
+
+	m.deleteSeeder(seeder.PeerId)
+
+	blockIndex, ok := m.lastRequestedBlock[string(seeder.PeerId)]
+
+	if !ok || m.downloadedBlockBitfield.Get(uint(blockIndex)) == 1 {
+		return
+	}
+
+	m.downloadingBlockBitfield.Clear(uint(blockIndex))
+
+	pieceIndex, _ := m.convertGlobalBlockToPieceIndex(int64(blockIndex))
+
+	for _, anotherSeeder := range m.getSeederSlice() {
+		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(pieceIndex)) == 1 {
+			anotherSeeder.outcoming <- Message{Interested, nil, m.peerId}
+			m.interestingPeerCount += 1
+		}
+	}
+
+}
+
+func (m *Manager) handleMessage(message *Message) {
+
+	seeder, ok := m.getSeeder(message.PeerId)
+
+	if !ok {
+		log.Printf("Peer with id %v is not found. Ignore message.", message.PeerId)
+		return
+	}
+
+	switch message.Id {
+
+	case Bitfield:
+		m.handleBitfiedMessage(seeder, message.Payload)
+
+	case Have:
+		m.handleHaveMessage(seeder, message.Payload)
+
+	case Choke:
+		m.handleChokeMessage(seeder)
+
+	case Unchoke:
+		m.handleUnchokeMessage(seeder)
+
+	case Interested:
+		m.handleInterestedMessage(seeder)
+
+	case NotInterested:
+		m.handleNotInterestedMessage(seeder)
+
+	case Request:
+		m.handleRequestMessage(seeder, message.Payload)
+
+	case Piece:
+		m.handlePieceMessage(seeder, message.Payload)
+
+	}
 }
 
 func (m *Manager) getSeeder(peerId []byte) (seeder *Seeder, ok bool) {
@@ -352,43 +449,6 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 	}
 }
 
-func (m *Manager) handleClosing(seeder *Seeder) {
-
-	log.Println("HANDLE ERROR")
-
-	seeder, ok := m.getSeeder(seeder.PeerId)
-	if !ok {
-		return
-		panic("Seeder not found in seeder map after closing.")
-	}
-
-	if seeder.AmInterested == true {
-		m.interestingPeerCount -= 1
-	}
-
-	seeder.Close()
-
-	m.deleteSeeder(seeder.PeerId)
-
-	blockIndex, ok := m.lastRequestedBlock[string(seeder.PeerId)]
-
-	if !ok || m.downloadedBlockBitfield.Get(uint(blockIndex)) == 1 {
-		return
-	}
-
-	m.downloadingBlockBitfield.Clear(uint(blockIndex))
-
-	pieceIndex, _ := m.convertGlobalBlockToPieceIndex(int64(blockIndex))
-
-	for _, anotherSeeder := range m.getSeederSlice() {
-		if anotherSeeder.AmInterested == false && anotherSeeder.PeerBitfield.Get(uint(pieceIndex)) == 1 {
-			anotherSeeder.outcoming <- Message{Interested, nil, m.peerId}
-			m.interestingPeerCount += 1
-		}
-	}
-
-}
-
 func (m *Manager) handleBitfiedMessage(seeder *Seeder, payload []byte) {
 
 	seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(payload, uint(m.pieceCount))
@@ -500,47 +560,5 @@ func (m *Manager) handlePieceMessage(seeder *Seeder, payload []byte) {
 	} else {
 		seeder.outcoming <- Message{NotInterested, nil, m.peerId}
 		m.interestingPeerCount -= 1
-	}
-}
-
-func (m *Manager) handleMessage(message *Message) {
-
-	seeder, ok := m.getSeeder(message.PeerId)
-
-	if !ok {
-		log.Printf("Peer with id %v is not found. Ignore message.", message.PeerId)
-		return
-	}
-
-	switch message.Id {
-
-	//case Error:
-	//	m.handleClosing(seeder)
-	//	m.deleteSeeder(seeder.PeerId)
-
-	case Bitfield:
-		m.handleBitfiedMessage(seeder, message.Payload)
-
-	case Have:
-		m.handleHaveMessage(seeder, message.Payload)
-
-	case Choke:
-		m.handleChokeMessage(seeder)
-
-	case Unchoke:
-		m.handleUnchokeMessage(seeder)
-
-	case Interested:
-		m.handleInterestedMessage(seeder)
-
-	case NotInterested:
-		m.handleNotInterestedMessage(seeder)
-
-	case Request:
-		m.handleRequestMessage(seeder, message.Payload)
-
-	case Piece:
-		m.handlePieceMessage(seeder, message.Payload)
-
 	}
 }
