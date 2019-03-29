@@ -93,6 +93,7 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	log.Println(m.blocksPerPiece)
 
 	m.Done = make(chan struct{}, 1)
+	m.stopped = make(chan struct{}, 1)
 
 	return m
 }
@@ -112,6 +113,7 @@ func (m *Manager) Start() {
 				m.handleMessage(&message)
 
 			case <-m.stopped:
+				log.Println("STOPPED")
 				for _, seeder := range m.getSeederSlice() {
 					seeder.Close()
 					m.deleteSeeder(seeder.PeerId)

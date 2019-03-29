@@ -38,6 +38,12 @@ type Download struct {
 
 func (d *Download) Start() {
 
+	if !d.State.Stopped() {
+		return
+	}
+
+	d.State.SetStopped(false)
+
 	d.ListenPort = 8861
 
 	l, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(d.ListenPort), 10))
@@ -58,7 +64,7 @@ func (d *Download) Start() {
 	} else {
 
 		go func() {
-			for {
+			for !d.State.Stopped() {
 				// Listen for an incoming connection.
 				conn, err := l.Accept()
 				if err != nil {
@@ -81,7 +87,7 @@ func (d *Download) Start() {
 	}
 
 	go func() {
-		for {
+		for !d.State.Stopped() {
 
 			select {
 			case response := <-d.tracker.announceResponseChannel:
@@ -93,6 +99,7 @@ func (d *Download) Start() {
 					continue
 				}
 
+				// todo stop while connecting
 				for _, peer := range response.Peers {
 
 					_, ok := d.peerStatus[peer]
@@ -139,6 +146,7 @@ func (d *Download) Start() {
 			case <-d.manager.Done:
 				d.completed = true
 				d.announce(Completed)
+				d.State.SetFinished(true)
 				d.Done <- struct{}{}
 
 			case <-d.announceTimer.C:
@@ -157,9 +165,14 @@ func (d *Download) Start() {
 
 func (d *Download) Stop() {
 
+	if d.State.Stopped() {
+		return
+	}
+
 	d.manager.Stop()
 	d.announce(Stopped)
 
+	d.State.SetStopped(true)
 }
 
 func (d *Download) announce(event Event) {
@@ -192,6 +205,7 @@ func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err erro
 	}
 
 	d.State = NewState(uint64(d.Metadata.Info.TotalLength), uint(d.Metadata.Info.PieceCount))
+	d.State.SetStopped(true)
 
 	d.storage, err = NewStorage(d.Metadata.Info, downloadPath)
 	if err != nil {
