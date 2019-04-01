@@ -454,6 +454,10 @@ func writeMessage(w io.Writer, id MessageId, payload []byte) (err error) {
 	if id == KeepAlive {
 		message = make([]byte, 4)
 		binary.BigEndian.PutUint32(message[0:4], 0)
+		_, err = w.Write(message)
+		if err != nil {
+			return errors.Annotate(err, "write message")
+		}
 		return nil
 	}
 
