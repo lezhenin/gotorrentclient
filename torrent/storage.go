@@ -1,7 +1,6 @@
 package torrent
 
 import (
-	log "github.com/sirupsen/logrus"
 	"os"
 	"path"
 )
@@ -23,7 +22,6 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 			filePath = path.Join(filePath, pathPart)
 		}
 
-		// ignore all errors
 		_ = os.Mkdir(path.Dir(filePath), 0777)
 
 		file, err := os.Create(filePath)
@@ -44,8 +42,6 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 		s.files = append(s.files, file)
 		s.fileInfos = append(s.fileInfos, fileInfo)
 
-		log.Printf("File \"%s\" is created: %d bytes",
-			filePath, infoFile.Length)
 	}
 
 	s.totalSize = info.TotalLength

@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"github.com/lezhenin/gotorrentclient/bitfield"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
+	"log"
 	"net"
 	"sync"
 )
@@ -140,8 +141,12 @@ func (m *Manager) AddSeeder(conn net.Conn, accept bool) (err error) {
 
 func (m *Manager) Start() {
 
-	managerLogger.Info("Start download: piece length = %d, block length = %d, blocks per piece = %d",
-		m.info.PieceLength, blockLength, m.blocksPerPiece)
+	managerLogger.WithFields(logrus.Fields{
+		"downloaded": m.state.Downloaded(),
+		"uploaded":   m.state.Uploaded(),
+		"left":       m.state.Left(),
+		"infoHash":   m.infoHash,
+	}).Info("Download started")
 
 	m.wait.Add(1)
 
@@ -177,6 +182,13 @@ func (m *Manager) Start() {
 func (m *Manager) Stop() {
 
 	m.stopSignals <- struct{}{}
+
+	managerLogger.WithFields(logrus.Fields{
+		"downloaded": m.state.Downloaded(),
+		"uploaded":   m.state.Uploaded(),
+		"left":       m.state.Left(),
+		"infoHash":   m.infoHash,
+	}).Info("Download stopped")
 
 }
 
@@ -460,7 +472,11 @@ func (m *Manager) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, inte
 			m.downloadingBlockBitfield.Set(index)
 			m.lastRequestedBlock[string(seeder.PeerId)] = uint64(index)
 
-			managerLogger.Tracef("Request block %d of piece %d", blockIndex, pieceIndex)
+			managerLogger.WithFields(logrus.Fields{
+				"pieceIndex": pieceIndex,
+				"blockIndex": blockIndex,
+				"infoHash":   m.infoHash,
+			}).Trace("Block requested")
 
 			return pieceIndex, blockIndex, true
 		}
@@ -474,7 +490,11 @@ func (m *Manager) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, inte
 
 func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
-	log.Printf("Accept block %d of piece %d", blockIndex, pieceIndex)
+	managerLogger.WithFields(logrus.Fields{
+		"pieceIndex": pieceIndex,
+		"blockIndex": blockIndex,
+		"infoHash":   m.infoHash,
+	}).Trace("Block accepted")
 
 	pieceLength := int(m.info.PieceLength)
 	offset := pieceIndex*pieceLength + blockIndex*blockLength
@@ -507,7 +527,10 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 		if bytes.Compare(downloadHashSum, pieceHashSum) != 0 {
 
-			log.Printf("Hash is wrong for piece %d", pieceIndex)
+			managerLogger.WithFields(logrus.Fields{
+				"pieceIndex": pieceIndex,
+				"infoHash":   m.infoHash,
+			}).Trace("Hash is wrong")
 
 			if int64(pieceIndex) == m.pieceCount-1 {
 				m.pieceDownloadProgress[pieceIndex] = m.blocksPerLastPiece
@@ -524,26 +547,33 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 			return
 		}
 
-		log.Printf("Accept piece %d", pieceIndex)
+		managerLogger.WithFields(logrus.Fields{
+			"pieceIndex": pieceIndex,
+			"infoHash":   m.infoHash,
+		}).Trace("Piece accepted")
 
 		m.state.IncrementDownloaded(uint64(pieceLength))
 		m.state.DecrementLeft(uint64(pieceLength))
 
-		log.Printf("Downloaded %d/%d", m.state.downloaded, m.info.TotalLength)
+		managerLogger.Infof("Downloaded %d/%d", m.state.downloaded, m.info.TotalLength)
 
 		m.downloadedPieceBitfield.Set(uint(pieceIndex))
 		m.state.SetBitfieldBit(uint(pieceIndex))
 
 		for _, s := range m.getSeederSlice() {
 			if s.PeerBitfield.Get(uint(pieceIndex)) == 0 {
-				log.Printf("SEND HAVE")
 				s.outcoming <- Message{Have, makeHavePayload(uint32(pieceIndex)), m.peerId}
 			}
 		}
 
 		if m.downloadedPieceBitfield.GetFirstIndex(0, 0) == m.downloadedPieceBitfield.Length() {
 			m.Done <- struct{}{}
-			log.Printf("Download completed.")
+			managerLogger.WithFields(logrus.Fields{
+				"downloaded": m.state.Downloaded(),
+				"uploaded":   m.state.Uploaded(),
+				"left":       m.state.Left(),
+				"infoHash":   m.infoHash,
+			}).Info("Download completed")
 		}
 	}
 }

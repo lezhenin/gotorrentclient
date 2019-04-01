@@ -83,7 +83,8 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 	}
 
 	seederLogger.WithFields(logrus.Fields{
-		"peer": s.PeerId,
+		"peer":     s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Trace("Handshake received")
 
 	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
@@ -92,7 +93,8 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 	}
 
 	seederLogger.WithFields(logrus.Fields{
-		"peer": s.PeerId,
+		"peer":     s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Trace("Handshake sent")
 
 	// if handshake done clear deadline
@@ -121,7 +123,8 @@ func (s *Seeder) Dial(connection net.Conn) (err error) {
 	}
 
 	seederLogger.WithFields(logrus.Fields{
-		"peer": s.PeerId,
+		"peer":     s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Trace("Handshake sent")
 
 	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
@@ -130,7 +133,8 @@ func (s *Seeder) Dial(connection net.Conn) (err error) {
 	}
 
 	seederLogger.WithFields(logrus.Fields{
-		"peer": s.PeerId,
+		"peer":     s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Trace("Handshake received")
 
 	// if handshake done clear deadline
@@ -160,8 +164,8 @@ func (s *Seeder) Start() {
 	}()
 
 	seederLogger.WithFields(logrus.Fields{
-		"myPeerId": s.MyPeerId,
 		"peerId":   s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Info("Seeder run")
 
 	s.closeGroup.Wait()
@@ -170,8 +174,8 @@ func (s *Seeder) Start() {
 func (s *Seeder) Close() {
 
 	seederLogger.WithFields(logrus.Fields{
-		"myPeerId": s.MyPeerId,
 		"peerId":   s.PeerId,
+		"infoHash": s.InfoHash,
 	}).Info("Seeder closed")
 
 	s.closeConnectionOnce.Do(s.closeConnection)
@@ -213,7 +217,7 @@ func (s *Seeder) read() {
 			"id":       id,
 			"len":      len(payload),
 			"peerId":   s.PeerId,
-			"myPeerId": s.MyPeerId,
+			"infoHash": s.InfoHash,
 		}).Trace("Message received")
 
 		select {
@@ -235,7 +239,7 @@ func (s *Seeder) write() {
 				err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
 				if err != nil {
 					seederLogger.WithFields(logrus.Fields{
-						"myPeerId": s.MyPeerId,
+						"infoHash": s.InfoHash,
 						"peerId":   s.PeerId,
 					}).Error(errors.Annotate(err, "seeder write"))
 					return
@@ -245,7 +249,7 @@ func (s *Seeder) write() {
 			err := writeMessage(s.connection, message.Id, message.Payload)
 			if err != nil {
 				seederLogger.WithFields(logrus.Fields{
-					"myPeerId": s.MyPeerId,
+					"infoHash": s.InfoHash,
 					"peerId":   s.PeerId,
 				}).Error(errors.Annotate(err, "seeder write"))
 				return
@@ -255,7 +259,7 @@ func (s *Seeder) write() {
 				"id":       message.Id,
 				"len":      len(message.Payload),
 				"peerId":   s.PeerId,
-				"myPeerId": s.MyPeerId,
+				"infoHash": s.InfoHash,
 			}).Trace("Message sent")
 
 		case <-s.closeChan:
