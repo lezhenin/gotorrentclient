@@ -3,7 +3,7 @@ package torrent
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
 	"time"

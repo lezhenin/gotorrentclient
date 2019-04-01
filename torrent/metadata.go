@@ -3,9 +3,9 @@ package torrent
 import (
 	"crypto/sha1"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"github.com/zeebo/bencode"
 	"io/ioutil"
-	"log"
 	"time"
 )
 

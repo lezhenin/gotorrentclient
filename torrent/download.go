@@ -2,7 +2,7 @@ package torrent
 
 import (
 	"crypto/rand"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"net/url"
 	"sync"
@@ -211,6 +211,8 @@ func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err erro
 
 	d.announceTimer = time.NewTimer(0)
 	<-d.announceTimer.C
+
+	log.SetLevel(log.TraceLevel)
 
 	return d, nil
 }

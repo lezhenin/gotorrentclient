@@ -3,10 +3,10 @@ package torrent
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
+	"github.com/juju/errors"
 	"github.com/lezhenin/gotorrentclient/bitfield"
+	"github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -42,15 +42,6 @@ type Message struct {
 	PeerId  []byte
 }
 
-type SeederError struct {
-	err    error
-	PeerId []byte
-}
-
-func (e *SeederError) Error() string {
-	return fmt.Sprintf("seeder %v: %s", e.PeerId, e.err.Error())
-}
-
 type Seeder struct {
 	AmChoking      bool
 	AmInterested   bool
@@ -83,23 +74,31 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 	// set deadline 15 second for handshake
 	err = s.connection.SetDeadline(time.Now().Add(handshakeTimeout * time.Second))
 	if err != nil {
-		return err
+		return errors.Annotate(err, "accept new seeder connection")
 	}
 
 	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "accept new seeder connection")
 	}
+
+	seederLogger.WithFields(logrus.Fields{
+		"peer": s.PeerId,
+	}).Trace("Handshake received")
 
 	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "accept new seeder connection")
 	}
+
+	seederLogger.WithFields(logrus.Fields{
+		"peer": s.PeerId,
+	}).Trace("Handshake sent")
 
 	// if handshake done clear deadline
 	err = s.connection.SetDeadline(time.Time{})
 	if err != nil {
-		return err
+		return errors.Annotate(err, "accept new seeder connection")
 	}
 
 	return nil
@@ -113,23 +112,31 @@ func (s *Seeder) Init(connection net.Conn) (err error) {
 	// set deadline 15 second for handshake
 	err = s.connection.SetDeadline(time.Now().Add(handshakeTimeout * time.Second))
 	if err != nil {
-		return err
+		return errors.Annotate(err, "init new seeder connection")
 	}
 
 	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "init new seeder connection")
 	}
+
+	seederLogger.WithFields(logrus.Fields{
+		"peer": s.PeerId,
+	}).Trace("Handshake sent")
 
 	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "init new seeder connection")
 	}
+
+	seederLogger.WithFields(logrus.Fields{
+		"peer": s.PeerId,
+	}).Trace("Handshake received")
 
 	// if handshake done clear deadline
 	err = s.connection.SetDeadline(time.Time{})
 	if err != nil {
-		return err
+		return errors.Annotate(err, "init new seeder connection")
 	}
 
 	return nil
@@ -152,10 +159,20 @@ func (s *Seeder) Run() {
 		s.closeGroup.Done()
 	}()
 
+	seederLogger.WithFields(logrus.Fields{
+		"myPeerId": s.MyPeerId,
+		"peerId":   s.PeerId,
+	}).Info("Seeder run")
+
 	s.closeGroup.Wait()
 }
 
 func (s *Seeder) Close() {
+
+	seederLogger.WithFields(logrus.Fields{
+		"myPeerId": s.MyPeerId,
+		"peerId":   s.PeerId,
+	}).Info("Seeder closed")
 
 	s.closeConnectionOnce.Do(s.closeConnection)
 	s.closeGroup.Wait()
@@ -182,17 +199,22 @@ func (s *Seeder) read() {
 
 		id, payload, err := readMessage(s.connection)
 		if err != nil {
-			log.Println(err)
 			return
 		}
 
 		if id == Piece {
 			err = s.connection.SetReadDeadline(time.Time{})
 			if err != nil {
-				log.Println(err)
 				return
 			}
 		}
+
+		seederLogger.WithFields(logrus.Fields{
+			"id":       id,
+			"len":      len(payload),
+			"peerId":   s.PeerId,
+			"myPeerId": s.MyPeerId,
+		}).Trace("Message received")
 
 		select {
 		case s.incoming <- Message{id, payload, s.PeerId}:
@@ -212,14 +234,29 @@ func (s *Seeder) write() {
 			if message.Id == Request {
 				err := s.connection.SetReadDeadline(time.Now().Add(requestTimeout * time.Second))
 				if err != nil {
+					seederLogger.WithFields(logrus.Fields{
+						"myPeerId": s.MyPeerId,
+						"peerId":   s.PeerId,
+					}).Error(errors.Annotate(err, "seeder write"))
 					return
 				}
 			}
 
 			err := writeMessage(s.connection, message.Id, message.Payload)
 			if err != nil {
+				seederLogger.WithFields(logrus.Fields{
+					"myPeerId": s.MyPeerId,
+					"peerId":   s.PeerId,
+				}).Error(errors.Annotate(err, "seeder write"))
 				return
 			}
+
+			seederLogger.WithFields(logrus.Fields{
+				"id":       message.Id,
+				"len":      len(message.Payload),
+				"peerId":   s.PeerId,
+				"myPeerId": s.MyPeerId,
+			}).Trace("Message sent")
 
 		case <-s.closeChan:
 			return
@@ -266,7 +303,7 @@ func writeHandshakeMessage(w io.Writer, infoHash []byte, peerId []byte) (err err
 
 	_, err = w.Write(message)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "write handshake message")
 	}
 
 	return nil
@@ -278,7 +315,7 @@ func readHandshakeMessage(r io.Reader, expectedInfoHash []byte) (peerId []byte, 
 
 	_, err = io.ReadAtLeast(r, stringLengthBuffer, 1)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "read handshake message")
 	}
 
 	stringLength := uint8(stringLengthBuffer[0])
@@ -286,35 +323,32 @@ func readHandshakeMessage(r io.Reader, expectedInfoHash []byte) (peerId []byte, 
 	protocolStringBuffer := make([]byte, stringLength)
 	_, err = io.ReadFull(r, protocolStringBuffer)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "read handshake message")
 	}
-	protocolString := string(protocolStringBuffer)
+	//protocolString := string(protocolStringBuffer)
 
 	extensionBuffer := make([]byte, 8)
 	_, err = io.ReadFull(r, extensionBuffer)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "read handshake message")
 	}
 
 	infoHash := make([]byte, 20)
 	_, err = io.ReadFull(r, infoHash)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "read handshake message")
 	}
 
 	if bytes.Compare(expectedInfoHash, infoHash) != 0 {
-		return nil, fmt.Errorf("parse handshake message:" +
-			" info hash doesn't match")
+		return nil,
+			errors.Errorf("read handshake message: info hash doesn't match")
 	}
 
 	peerId = make([]byte, 20)
 	_, err = io.ReadFull(r, peerId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "read handshake message")
 	}
-
-	log.Printf("Handshake received: protocol %s, peer id = %v, info hash = %v",
-		protocolString, peerId, infoHash)
 
 	return peerId, nil
 
@@ -331,7 +365,7 @@ func parseHavePayload(payload []byte) (pieceIndex uint32, err error) {
 
 	if len(payload) != 4 {
 		return 0,
-			fmt.Errorf("parse have payload: byte slice has wrong length %d", len(payload))
+			errors.Errorf("parse have payload: byte slice has wrong length %d", len(payload))
 	}
 
 	pieceIndex = binary.BigEndian.Uint32(payload)
@@ -351,7 +385,7 @@ func parseRequestPayload(payload []byte) (pieceIndex uint32, begin uint32, lengt
 
 	if len(payload) != 12 {
 		return 0, 0, 0,
-			fmt.Errorf("parse request payload: byte slice has wrong length %d", len(payload))
+			errors.Errorf("parse request payload: message has unexpected length %d", len(payload))
 	}
 
 	pieceIndex = binary.BigEndian.Uint32(payload[0:4])
@@ -375,7 +409,7 @@ func parsePiecePayload(payload []byte) (pieceIndex uint32, begin uint32, block [
 
 	if len(payload) < 8 {
 		return 0, 0, nil,
-			fmt.Errorf("parse piece payload: byte slice length %d less than 9", len(payload))
+			errors.Errorf("parse piece payload: message has length %d less than 9", len(payload))
 	}
 
 	pieceIndex = binary.BigEndian.Uint32(payload[0:4])
@@ -399,7 +433,7 @@ func parseCancelPayload(payload []byte) (pieceIndex uint32, begin uint32, length
 
 	if len(payload) != 12 {
 		return 0, 0, 0,
-			fmt.Errorf("parse cancel payload: byte slice has wrong length %d", len(payload))
+			errors.Errorf("parse cancel payload: message has unexpected length %d", len(payload))
 	}
 
 	pieceIndex = binary.BigEndian.Uint32(payload[0:4])
@@ -427,10 +461,10 @@ func writeMessage(w io.Writer, id MessageId, payload []byte) (err error) {
 
 	_, err = w.Write(message)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "write message")
 	}
 
-	//log.Printf("Message sent: id = %d, len = %d", id, length)
+	//logrus.Printf("Message sent: id = %d, len = %d", id, length)
 
 	return nil
 }
@@ -441,7 +475,7 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 
 	_, err = io.ReadAtLeast(r, lengthBuffer, 4)
 	if err != nil {
-		return Error, nil, err
+		return Error, nil, errors.Annotate(err, "read message")
 	}
 
 	length := binary.BigEndian.Uint32(lengthBuffer)
@@ -453,14 +487,14 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 	idBuffer := make([]byte, 1)
 	_, err = io.ReadAtLeast(r, idBuffer, 1)
 	if err != nil {
-		panic(err)
+		return Error, nil, errors.Annotate(err, "read message")
 	}
 
 	id = MessageId(idBuffer[0])
 
 	if id > Cancel && id != KeepAlive {
 		return Error, nil,
-			fmt.Errorf("read message: message has unsupported id %d", id)
+			errors.Errorf("read message: message has unknown id %d", id)
 	}
 
 	if length == 1 {
@@ -469,12 +503,9 @@ func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
 
 	payload = make([]byte, length-1)
 	_, err = io.ReadFull(r, payload)
-
 	if err != nil {
-		return Error, nil, err
+		return Error, nil, errors.Annotate(err, "read message")
 	}
-
-	//log.Printf("Message received: id = %d, len = %d", id, length)
 
 	return id, payload, nil
 

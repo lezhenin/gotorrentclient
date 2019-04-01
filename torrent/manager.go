@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"github.com/lezhenin/gotorrentclient/bitfield"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 )
