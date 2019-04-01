@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"fmt"
+	"github.com/juju/errors"
 	"net"
 	"sync"
 )
@@ -28,7 +29,7 @@ func NewListener(portRangeStart, portRangeEnd int) (listener *Listener, err erro
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("new listener: probably ports from %d to %d unavailable",
+		return nil, errors.Errorf("new listener: ports from %d to %d unavailable",
 			portRangeStart, portRangeEnd)
 	}
 

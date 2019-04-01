@@ -105,7 +105,7 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 
 }
 
-func (s *Seeder) Init(connection net.Conn) (err error) {
+func (s *Seeder) Dial(connection net.Conn) (err error) {
 
 	s.connection = connection
 
@@ -143,7 +143,7 @@ func (s *Seeder) Init(connection net.Conn) (err error) {
 
 }
 
-func (s *Seeder) Run() {
+func (s *Seeder) Start() {
 
 	s.closeGroup.Add(2)
 
