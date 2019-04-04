@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand"
 	"net"
 	"sync"
@@ -382,60 +383,134 @@ func TestSeeder_Start(t *testing.T) {
 
 }
 
-func TestSeeder_MakeAndParse(t *testing.T) {
+func TestSeeder_MakePayload(t *testing.T) {
 
 	pieceIndex := rand.Uint32()
 	offset := rand.Uint32()
 	length := rand.Uint32()
 
-	payload := makeHavePayload(pieceIndex)
-	parsedPieceIndex, err := parseHavePayload(payload)
-
-	if err != nil {
-		t.Error("Can not parse have payload:", err)
-	}
-
+	payload := MakeHavePayload(pieceIndex)
+	parsedPieceIndex := binary.BigEndian.Uint32(payload)
 	if parsedPieceIndex != pieceIndex {
-		t.Errorf("Make and parse doesnt correspond: %d != %d", pieceIndex, parsedPieceIndex)
+		t.Errorf("Have payload is wrong: %d != %d",
+			pieceIndex, parsedPieceIndex)
 	}
 
-	payload = makeRequestPayload(pieceIndex, offset, length)
-	parsedPieceIndex, parsedOffset, parsedLength, err := parseRequestPayload(payload)
-
-	if err != nil {
-		t.Error("Can not parse request payload:", err)
-	}
-
+	payload = MakeRequestPayload(pieceIndex, offset, length)
+	parsedPieceIndex = binary.BigEndian.Uint32(payload[0:4])
+	parsedOffset := binary.BigEndian.Uint32(payload[4:8])
+	parsedLength := binary.BigEndian.Uint32(payload[8:12])
 	if parsedPieceIndex != pieceIndex || parsedOffset != offset || parsedLength != length {
-		t.Errorf("Make and parse doesnt correspond: (%d, %d, %d) != (%d, %d, %d)",
+		t.Errorf("Request payload is wrong: (%d, %d, %d) != (%d, %d, %d)",
 			pieceIndex, offset, length, parsedPieceIndex, parsedOffset, parsedLength)
 	}
 
-	payload = makeCancelPayload(pieceIndex, offset, length)
-	parsedPieceIndex, parsedOffset, parsedLength, err = parseCancelPayload(payload)
-
-	if err != nil {
-		t.Error("Can not parse cancel payload:", err)
+	payload = MakeCancelPayload(pieceIndex, offset, length)
+	parsedPieceIndex = binary.BigEndian.Uint32(payload[0:4])
+	parsedOffset = binary.BigEndian.Uint32(payload[4:8])
+	parsedLength = binary.BigEndian.Uint32(payload[8:12])
+	if parsedPieceIndex != pieceIndex || parsedOffset != offset || parsedLength != length {
+		t.Errorf("Cancel payload is wrong: (%d, %d, %d) != (%d, %d, %d)",
+			pieceIndex, offset, length, parsedPieceIndex, parsedOffset, parsedLength)
 	}
 
+	payload = MakeCancelPayload(pieceIndex, offset, length)
+	parsedPieceIndex = binary.BigEndian.Uint32(payload[0:4])
+	parsedOffset = binary.BigEndian.Uint32(payload[4:8])
+	parsedLength = binary.BigEndian.Uint32(payload[8:12])
 	if parsedPieceIndex != pieceIndex || parsedOffset != offset || parsedLength != length {
-		t.Errorf("Make and parse doesnt correspond: (%d, %d, %d) != (%d, %d, %d)",
+		t.Errorf("Cancel payload is wrong: (%d, %d, %d) != (%d, %d, %d)",
 			pieceIndex, offset, length, parsedPieceIndex, parsedOffset, parsedLength)
 	}
 
 	block := make([]byte, 256)
 	rand.Read(block)
 
-	payload = makePiecePayload(pieceIndex, offset, block)
-	parsedPieceIndex, parsedOffset, parsedBlock, err := parsePiecePayload(payload)
+	payload = MakePiecePayload(pieceIndex, offset, block)
+	parsedPieceIndex = binary.BigEndian.Uint32(payload[0:4])
+	parsedOffset = binary.BigEndian.Uint32(payload[4:8])
+	parsedBlock := payload[8:]
+	if parsedPieceIndex != pieceIndex || parsedOffset != offset || bytes.Compare(parsedBlock, block) != 0 {
+		t.Errorf("Piece payload is wrong: (%d, %d, %v) != (%d, %d, %v)",
+			pieceIndex, offset, block, parsedPieceIndex, parsedOffset, parsedBlock)
+	}
+}
+
+func TestSeeder_MakeAndParsePayload(t *testing.T) {
+
+	pieceIndex := rand.Uint32()
+	offset := rand.Uint32()
+	length := rand.Uint32()
+
+	payload := MakeHavePayload(pieceIndex)
+	parsedPieceIndex, err := ParseHavePayload(payload)
+
+	if err != nil {
+		t.Error("Can not parse have payload:", err)
+	}
+
+	if parsedPieceIndex != pieceIndex {
+		t.Errorf("Make and parse for have doesnt correspond: %d != %d",
+			pieceIndex, parsedPieceIndex)
+	}
+
+	_, err = ParseHavePayload(payload[1:])
+	if err == nil {
+		t.Errorf("Parse have payload with wrong length %d", len(payload[1:]))
+	}
+
+	payload = MakeRequestPayload(pieceIndex, offset, length)
+	parsedPieceIndex, parsedOffset, parsedLength, err := ParseRequestPayload(payload)
+
+	if err != nil {
+		t.Error("Can not parse request payload:", err)
+	}
+
+	if parsedPieceIndex != pieceIndex || parsedOffset != offset || parsedLength != length {
+		t.Errorf("Make and parse for request doesnt correspond: (%d, %d, %d) != (%d, %d, %d)",
+			pieceIndex, offset, length, parsedPieceIndex, parsedOffset, parsedLength)
+	}
+
+	_, _, _, err = ParseRequestPayload(payload[1:])
+	if err == nil {
+		t.Errorf("Parse request payload with wrong length %d", len(payload[1:]))
+	}
+
+	payload = MakeCancelPayload(pieceIndex, offset, length)
+	parsedPieceIndex, parsedOffset, parsedLength, err = ParseCancelPayload(payload)
+
+	if err != nil {
+		t.Error("Can not parse cancel payload:", err)
+	}
+
+	if parsedPieceIndex != pieceIndex || parsedOffset != offset || parsedLength != length {
+		t.Errorf("Make and parse for cancel doesnt correspond: (%d, %d, %d) != (%d, %d, %d)",
+			pieceIndex, offset, length, parsedPieceIndex, parsedOffset, parsedLength)
+	}
+
+	_, _, _, err = ParseCancelPayload(payload[1:])
+	if err == nil {
+		t.Errorf("Parse cancel payload with wrong length %d", len(payload[1:]))
+	}
+
+	block := make([]byte, 256)
+	rand.Read(block)
+
+	payload = MakePiecePayload(pieceIndex, offset, block)
+	parsedPieceIndex, parsedOffset, parsedBlock, err := ParsePiecePayload(payload)
 
 	if err != nil {
 		t.Error("Can not parse piece payload:", err)
 	}
 
 	if parsedPieceIndex != pieceIndex || parsedOffset != offset || bytes.Compare(parsedBlock, block) != 0 {
-		t.Errorf("Make and parse doesnt correspond: (%d, %d, %v) != (%d, %d, %v)",
+		t.Errorf("Make and parse for piece doesnt correspond: (%d, %d, %v) != (%d, %d, %v)",
 			pieceIndex, offset, block, parsedPieceIndex, parsedOffset, parsedBlock)
+	}
+
+	_, _, _, err = ParsePiecePayload(payload[:7])
+	if err == nil {
+		t.Errorf("Parse cancel payload with invalid length %d", len(payload[:7]))
 	}
 
 }

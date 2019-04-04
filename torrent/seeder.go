@@ -77,7 +77,7 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 		return errors.Annotate(err, "accept new seeder connection")
 	}
 
-	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
+	s.PeerId, err = s.readHandshakeMessage()
 	if err != nil {
 		return errors.Annotate(err, "accept new seeder connection")
 	}
@@ -87,7 +87,7 @@ func (s *Seeder) Accept(connection net.Conn) (err error) {
 		"infoHash": s.InfoHash,
 	}).Trace("Handshake received")
 
-	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
+	err = s.writeHandshakeMessage()
 	if err != nil {
 		return errors.Annotate(err, "accept new seeder connection")
 	}
@@ -117,7 +117,7 @@ func (s *Seeder) Dial(connection net.Conn) (err error) {
 		return errors.Annotate(err, "init new seeder connection")
 	}
 
-	err = writeHandshakeMessage(s.connection, s.InfoHash, s.MyPeerId)
+	err = s.writeHandshakeMessage()
 	if err != nil {
 		return errors.Annotate(err, "init new seeder connection")
 	}
@@ -127,7 +127,7 @@ func (s *Seeder) Dial(connection net.Conn) (err error) {
 		"infoHash": s.InfoHash,
 	}).Trace("Handshake sent")
 
-	s.PeerId, err = readHandshakeMessage(s.connection, s.InfoHash)
+	s.PeerId, err = s.readHandshakeMessage()
 	if err != nil {
 		return errors.Annotate(err, "init new seeder connection")
 	}
@@ -201,7 +201,7 @@ func (s *Seeder) read() {
 
 	for {
 
-		id, payload, err := readMessage(s.connection)
+		id, payload, err := s.readMessage()
 		if err != nil {
 			return
 		}
@@ -246,7 +246,7 @@ func (s *Seeder) write() {
 				}
 			}
 
-			err := writeMessage(s.connection, message.Id, message.Payload)
+			err := s.writeMessage(message.Id, message.Payload)
 			if err != nil {
 				seederLogger.WithFields(logrus.Fields{
 					"infoHash": s.InfoHash,
@@ -266,6 +266,142 @@ func (s *Seeder) write() {
 			return
 		}
 	}
+}
+
+func (s *Seeder) writeMessage(id MessageId, payload []byte) (err error) {
+
+	var message []byte
+
+	if id == KeepAlive {
+		message = make([]byte, 4)
+		binary.BigEndian.PutUint32(message[0:4], 0)
+		_, err = s.connection.Write(message)
+		if err != nil {
+			return errors.Annotate(err, "write message")
+		}
+		return nil
+	}
+
+	length := 1 + len(payload)
+	message = make([]byte, length+4)
+	binary.BigEndian.PutUint32(message[0:4], uint32(length))
+	message[4] = byte(id)
+	copy(message[5:(5+length-1)], payload)
+
+	_, err = s.connection.Write(message)
+	if err != nil {
+		return errors.Annotate(err, "write message")
+	}
+
+	return nil
+}
+
+func (s *Seeder) readMessage() (id MessageId, payload []byte, err error) {
+
+	lengthBuffer := make([]byte, 4)
+
+	_, err = io.ReadAtLeast(s.connection, lengthBuffer, 4)
+	if err != nil {
+		return Error, nil, errors.Annotate(err, "read message")
+	}
+
+	length := binary.BigEndian.Uint32(lengthBuffer)
+
+	if length == 0 {
+		return KeepAlive, nil, nil
+	}
+
+	idBuffer := make([]byte, 1)
+	_, err = io.ReadAtLeast(s.connection, idBuffer, 1)
+	if err != nil {
+		return Error, nil, errors.Annotate(err, "read message")
+	}
+
+	id = MessageId(idBuffer[0])
+
+	if id > Cancel && id != KeepAlive {
+		return Error, nil,
+			errors.Errorf("read message: message has unknown id %d", id)
+	}
+
+	if length == 1 {
+		return id, nil, nil
+	}
+
+	payload = make([]byte, length-1)
+	_, err = io.ReadFull(s.connection, payload)
+	if err != nil {
+		return Error, nil, errors.Annotate(err, "read message")
+	}
+
+	return id, payload, nil
+
+}
+
+func (s *Seeder) writeHandshakeMessage() (err error) {
+
+	protocolString := protocolId
+
+	message := make([]byte, 49+19)
+
+	message[0] = 19
+	copy(message[1:20], []byte(protocolString))
+	copy(message[28:48], s.InfoHash)
+	copy(message[48:68], s.MyPeerId)
+
+	binary.BigEndian.PutUint64(message[20:28], 0)
+
+	_, err = s.connection.Write(message)
+	if err != nil {
+		return errors.Annotate(err, "write handshake message")
+	}
+
+	return nil
+}
+
+func (s *Seeder) readHandshakeMessage() (peerId []byte, err error) {
+
+	stringLengthBuffer := make([]byte, 1)
+
+	_, err = io.ReadAtLeast(s.connection, stringLengthBuffer, 1)
+	if err != nil {
+		return nil, errors.Annotate(err, "read handshake message")
+	}
+
+	stringLength := uint8(stringLengthBuffer[0])
+
+	protocolStringBuffer := make([]byte, stringLength)
+	_, err = io.ReadFull(s.connection, protocolStringBuffer)
+	if err != nil {
+		return nil, errors.Annotate(err, "read handshake message")
+	}
+	//protocolString := string(protocolStringBuffer)
+
+	extensionBuffer := make([]byte, 8)
+	_, err = io.ReadFull(s.connection, extensionBuffer)
+	if err != nil {
+		return nil, errors.Annotate(err, "read handshake message")
+	}
+
+	infoHash := make([]byte, 20)
+	_, err = io.ReadFull(s.connection, infoHash)
+	if err != nil {
+		return nil, errors.Annotate(err, "read handshake message")
+	}
+
+	if bytes.Compare(s.InfoHash, infoHash) != 0 {
+		return nil,
+			errors.Errorf("read handshake message: info hash doesn't match")
+	}
+
+	peerId = make([]byte, 20)
+	_, err = io.ReadFull(s.connection, peerId)
+	if err != nil {
+		return nil, errors.Annotate(err, "read handshake message")
+	}
+
+	return peerId, nil
+
 }
 
 func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *Seeder, err error) {
@@ -292,80 +428,14 @@ func NewSeeder(infoHash []byte, peerId []byte, incoming chan Message) (seeder *S
 
 }
 
-func writeHandshakeMessage(w io.Writer, infoHash []byte, peerId []byte) (err error) {
-
-	protocolString := protocolId
-
-	message := make([]byte, 49+19)
-
-	message[0] = 19
-	copy(message[1:20], []byte(protocolString))
-	copy(message[28:48], infoHash)
-	copy(message[48:68], peerId)
-
-	binary.BigEndian.PutUint64(message[20:28], 0)
-
-	_, err = w.Write(message)
-	if err != nil {
-		return errors.Annotate(err, "write handshake message")
-	}
-
-	return nil
-}
-
-func readHandshakeMessage(r io.Reader, expectedInfoHash []byte) (peerId []byte, err error) {
-
-	stringLengthBuffer := make([]byte, 1)
-
-	_, err = io.ReadAtLeast(r, stringLengthBuffer, 1)
-	if err != nil {
-		return nil, errors.Annotate(err, "read handshake message")
-	}
-
-	stringLength := uint8(stringLengthBuffer[0])
-
-	protocolStringBuffer := make([]byte, stringLength)
-	_, err = io.ReadFull(r, protocolStringBuffer)
-	if err != nil {
-		return nil, errors.Annotate(err, "read handshake message")
-	}
-	//protocolString := string(protocolStringBuffer)
-
-	extensionBuffer := make([]byte, 8)
-	_, err = io.ReadFull(r, extensionBuffer)
-	if err != nil {
-		return nil, errors.Annotate(err, "read handshake message")
-	}
-
-	infoHash := make([]byte, 20)
-	_, err = io.ReadFull(r, infoHash)
-	if err != nil {
-		return nil, errors.Annotate(err, "read handshake message")
-	}
-
-	if bytes.Compare(expectedInfoHash, infoHash) != 0 {
-		return nil,
-			errors.Errorf("read handshake message: info hash doesn't match")
-	}
-
-	peerId = make([]byte, 20)
-	_, err = io.ReadFull(r, peerId)
-	if err != nil {
-		return nil, errors.Annotate(err, "read handshake message")
-	}
-
-	return peerId, nil
-
-}
-
-func makeHavePayload(pieceIndex uint32) (payload []byte) {
+func MakeHavePayload(pieceIndex uint32) (payload []byte) {
 
 	payload = make([]byte, 4)
 	binary.BigEndian.PutUint32(payload, pieceIndex)
 	return payload
 }
 
-func parseHavePayload(payload []byte) (pieceIndex uint32, err error) {
+func ParseHavePayload(payload []byte) (pieceIndex uint32, err error) {
 
 	if len(payload) != 4 {
 		return 0,
@@ -376,7 +446,7 @@ func parseHavePayload(payload []byte) (pieceIndex uint32, err error) {
 	return pieceIndex, nil
 }
 
-func makeRequestPayload(pieceIndex uint32, begin uint32, length uint32) (payload []byte) {
+func MakeRequestPayload(pieceIndex uint32, begin uint32, length uint32) (payload []byte) {
 
 	payload = make([]byte, 12)
 	binary.BigEndian.PutUint32(payload[0:4], pieceIndex)
@@ -385,7 +455,7 @@ func makeRequestPayload(pieceIndex uint32, begin uint32, length uint32) (payload
 	return payload
 }
 
-func parseRequestPayload(payload []byte) (pieceIndex uint32, begin uint32, length uint32, err error) {
+func ParseRequestPayload(payload []byte) (pieceIndex uint32, begin uint32, length uint32, err error) {
 
 	if len(payload) != 12 {
 		return 0, 0, 0,
@@ -399,7 +469,7 @@ func parseRequestPayload(payload []byte) (pieceIndex uint32, begin uint32, lengt
 	return pieceIndex, begin, length, nil
 }
 
-func makePiecePayload(pieceIndex uint32, begin uint32, block []byte) (payload []byte) {
+func MakePiecePayload(pieceIndex uint32, begin uint32, block []byte) (payload []byte) {
 
 	payload = make([]byte, 8+len(block))
 	binary.BigEndian.PutUint32(payload[0:4], pieceIndex)
@@ -409,7 +479,7 @@ func makePiecePayload(pieceIndex uint32, begin uint32, block []byte) (payload []
 	return payload
 }
 
-func parsePiecePayload(payload []byte) (pieceIndex uint32, begin uint32, block []byte, err error) {
+func ParsePiecePayload(payload []byte) (pieceIndex uint32, begin uint32, block []byte, err error) {
 
 	if len(payload) < 8 {
 		return 0, 0, nil,
@@ -424,7 +494,7 @@ func parsePiecePayload(payload []byte) (pieceIndex uint32, begin uint32, block [
 	return pieceIndex, begin, block, nil
 }
 
-func makeCancelPayload(pieceIndex uint32, begin uint32, length uint32) (payload []byte) {
+func MakeCancelPayload(pieceIndex uint32, begin uint32, length uint32) (payload []byte) {
 
 	payload = make([]byte, 12)
 	binary.BigEndian.PutUint32(payload[0:4], pieceIndex)
@@ -433,7 +503,7 @@ func makeCancelPayload(pieceIndex uint32, begin uint32, length uint32) (payload 
 	return payload
 }
 
-func parseCancelPayload(payload []byte) (pieceIndex uint32, begin uint32, length uint32, err error) {
+func ParseCancelPayload(payload []byte) (pieceIndex uint32, begin uint32, length uint32, err error) {
 
 	if len(payload) != 12 {
 		return 0, 0, 0,
@@ -445,76 +515,4 @@ func parseCancelPayload(payload []byte) (pieceIndex uint32, begin uint32, length
 	length = binary.BigEndian.Uint32(payload[8:12])
 
 	return pieceIndex, begin, length, nil
-}
-
-func writeMessage(w io.Writer, id MessageId, payload []byte) (err error) {
-
-	var message []byte
-
-	if id == KeepAlive {
-		message = make([]byte, 4)
-		binary.BigEndian.PutUint32(message[0:4], 0)
-		_, err = w.Write(message)
-		if err != nil {
-			return errors.Annotate(err, "write message")
-		}
-		return nil
-	}
-
-	length := 1 + len(payload)
-	message = make([]byte, length+4)
-	binary.BigEndian.PutUint32(message[0:4], uint32(length))
-	message[4] = byte(id)
-	copy(message[5:(5+length-1)], payload)
-
-	_, err = w.Write(message)
-	if err != nil {
-		return errors.Annotate(err, "write message")
-	}
-
-	//logrus.Printf("Message sent: id = %d, len = %d", id, length)
-
-	return nil
-}
-
-func readMessage(r io.Reader) (id MessageId, payload []byte, err error) {
-
-	lengthBuffer := make([]byte, 4)
-
-	_, err = io.ReadAtLeast(r, lengthBuffer, 4)
-	if err != nil {
-		return Error, nil, errors.Annotate(err, "read message")
-	}
-
-	length := binary.BigEndian.Uint32(lengthBuffer)
-
-	if length == 0 {
-		return KeepAlive, nil, nil
-	}
-
-	idBuffer := make([]byte, 1)
-	_, err = io.ReadAtLeast(r, idBuffer, 1)
-	if err != nil {
-		return Error, nil, errors.Annotate(err, "read message")
-	}
-
-	id = MessageId(idBuffer[0])
-
-	if id > Cancel && id != KeepAlive {
-		return Error, nil,
-			errors.Errorf("read message: message has unknown id %d", id)
-	}
-
-	if length == 1 {
-		return id, nil, nil
-	}
-
-	payload = make([]byte, length-1)
-	_, err = io.ReadFull(r, payload)
-	if err != nil {
-		return Error, nil, errors.Annotate(err, "read message")
-	}
-
-	return id, payload, nil
-
 }

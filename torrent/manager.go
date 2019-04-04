@@ -305,7 +305,7 @@ func (m *Manager) handleBitfiedMessage(seeder *Seeder, payload []byte) {
 
 func (m *Manager) handleHaveMessage(seeder *Seeder, payload []byte) {
 
-	pieceIndex, err := parseHavePayload(payload)
+	pieceIndex, err := ParseHavePayload(payload)
 	if err != nil {
 		seeder.Close()
 		return
@@ -335,7 +335,7 @@ func (m *Manager) handleUnchokeMessage(seeder *Seeder) {
 	if seeder.AmInterested == true {
 		pieceIndex, blockIndex, _ := m.requestPiece(seeder)
 		index, offset, length := m.convertPieceIndexToOffset(pieceIndex, blockIndex)
-		payload := makeRequestPayload(index, offset, length)
+		payload := MakeRequestPayload(index, offset, length)
 		seeder.outcoming <- Message{Request, payload, m.peerId}
 	}
 }
@@ -362,7 +362,7 @@ func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
 		return
 	}
 
-	index, offset, length, _ := parseRequestPayload(payload)
+	index, offset, length, _ := ParseRequestPayload(payload)
 
 	if seeder.PeerBitfield.Get(uint(index)) == 1 {
 		return
@@ -375,7 +375,7 @@ func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
 		return
 	}
 
-	seeder.outcoming <- Message{Piece, makePiecePayload(index, offset, data), m.peerId}
+	seeder.outcoming <- Message{Piece, MakePiecePayload(index, offset, data), m.peerId}
 
 	m.state.IncrementUploaded(uint64(length))
 
@@ -383,7 +383,7 @@ func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
 
 func (m *Manager) handlePieceMessage(seeder *Seeder, payload []byte) {
 
-	index, offset, data, err := parsePiecePayload(payload)
+	index, offset, data, err := ParsePiecePayload(payload)
 	if err != nil {
 		seeder.Close()
 		return
@@ -395,7 +395,7 @@ func (m *Manager) handlePieceMessage(seeder *Seeder, payload []byte) {
 
 	if interested {
 		index, offset, length := m.convertPieceIndexToOffset(pieceIndex, blockIndex)
-		payload := makeRequestPayload(index, offset, length)
+		payload := MakeRequestPayload(index, offset, length)
 		seeder.outcoming <- Message{Request, payload, m.peerId}
 	} else {
 		seeder.outcoming <- Message{NotInterested, nil, m.peerId}
@@ -562,7 +562,7 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 
 		for _, s := range m.getSeederSlice() {
 			if s.PeerBitfield.Get(uint(pieceIndex)) == 0 {
-				s.outcoming <- Message{Have, makeHavePayload(uint32(pieceIndex)), m.peerId}
+				s.outcoming <- Message{Have, MakeHavePayload(uint32(pieceIndex)), m.peerId}
 			}
 		}
 
