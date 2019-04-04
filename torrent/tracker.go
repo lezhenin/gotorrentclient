@@ -57,9 +57,6 @@ func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker,
 	tracker = new(Tracker)
 
 	tracker.connection = connection
-	if err != nil {
-		return nil, err
-	}
 
 	log.Printf("Tracker connection to %s is created\n", connection.RemoteAddr())
 
