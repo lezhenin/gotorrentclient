@@ -3,9 +3,11 @@ package torrent
 import (
 	"encoding/binary"
 	"fmt"
-	log "github.com/sirupsen/logrus"
+	"github.com/juju/errors"
+	"github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -49,7 +51,11 @@ type Tracker struct {
 	peerId   []byte
 	infoHash []byte
 
-	errorChannel chan error
+	closed bool
+
+	closeMutex sync.Mutex
+	closeWait  sync.WaitGroup
+	closeOnce  sync.Once
 }
 
 func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker, err error) {
@@ -57,8 +63,6 @@ func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker,
 	tracker = new(Tracker)
 
 	tracker.connection = connection
-
-	log.Printf("Tracker connection to %s is created\n", connection.RemoteAddr())
 
 	tracker.expirationTimer = time.NewTimer(0)
 	<-tracker.expirationTimer.C
@@ -68,8 +72,6 @@ func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker,
 	tracker.announceRequestChannel = make(chan AnnounceRequest, 1)
 	tracker.announceResponseChannel = make(chan AnnounceResponse, 1)
 
-	tracker.errorChannel = make(chan error, 1)
-
 	tracker.infoHash = infoHash
 	tracker.peerId = peerId
 
@@ -77,32 +79,88 @@ func NewTracker(peerId, infoHash []byte, connection net.Conn) (tracker *Tracker,
 
 }
 
-func (t *Tracker) Run() {
-	go t.routine()
-}
+func (t *Tracker) Run() (err error) {
 
-func (t *Tracker) routine() {
+	if t.closed == true {
+		return errors.Annotate(
+			errors.New("connection was already closed"),
+			"tracker run")
+	}
+
+	trackerLogger.WithFields(logrus.Fields{
+		"address": t.connection.RemoteAddr(),
+	}).Info("tracker connection is serviced")
+
+	t.closeWait.Add(1)
+	defer t.closeWait.Done()
 
 	for {
 
 		select {
 
-		case <-t.expirationTimer.C:
+		case _, ok := <-t.expirationTimer.C:
+
+			if !ok {
+				return nil
+			}
+
+			trackerLogger.WithFields(logrus.Fields{
+				"address":       t.connection.RemoteAddr(),
+				"connection id": t.connectionId,
+			}).Trace("connection id expired")
 
 			t.expire = true
 
-		case request := <-t.announceRequestChannel:
+		case request, ok := <-t.announceRequestChannel:
+
+			if !ok {
+				return nil
+			}
 
 			response, err := t.announce(request)
 			if err != nil {
-				t.errorChannel <- err
-			} else {
-				t.announceResponseChannel <- response
+				t.closeMutex.Lock()
+				if t.closed {
+					t.closeMutex.Unlock()
+					return nil
+				} else {
+
+					trackerLogger.WithFields(logrus.Fields{
+						"address": t.connection.RemoteAddr(),
+					}).Error(err.Error())
+
+					t.close()
+					t.closeMutex.Unlock()
+					return err
+				}
 			}
 
+			t.announceResponseChannel <- response
 		}
-
 	}
+}
+
+func (t *Tracker) Close() {
+
+	t.closeMutex.Lock()
+	t.close()
+	t.closeMutex.Unlock()
+	t.closeWait.Wait()
+
+}
+
+func (t *Tracker) close() {
+	t.closeOnce.Do(func() {
+		t.closed = true
+		_ = t.connection.Close()
+		close(t.announceResponseChannel)
+		close(t.announceRequestChannel)
+
+		trackerLogger.WithFields(logrus.Fields{
+			"address": t.connection.RemoteAddr(),
+		}).Info("tracker connection is closed")
+
+	})
 }
 
 func (t *Tracker) establishConnection() (connectionId uint64, err error) {
@@ -117,22 +175,26 @@ func (t *Tracker) establishConnection() (connectionId uint64, err error) {
 	_, err = t.connection.Write(request)
 
 	if err != nil {
-		return 0, err
+		return 0,
+			errors.Annotate(err, "establish connection")
 	}
 
 	response := make([]byte, 16)
-	_, err = t.connection.Read(response)
-	t.connectionId, err = parseConnectionResponse(response, transactionId)
+	n, err := t.connection.Read(response)
+	t.connectionId, err = parseConnectionResponse(response[:n], transactionId)
 
 	if err != nil {
-		return 0, err
+		return 0,
+			errors.NewNotValid(err, "establish connection")
 	}
 
 	t.expire = false
 	t.expirationTimer.Reset(time.Minute)
 
-	log.Printf("Tracker to torrent %s was established: t id = %d",
-		t.connection.RemoteAddr(), t.connectionId)
+	trackerLogger.WithFields(logrus.Fields{
+		"address":       t.connection.RemoteAddr(),
+		"connection id": t.connectionId,
+	}).Trace("new connection id received")
 
 	return t.connectionId, nil
 
@@ -142,7 +204,8 @@ func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, 
 
 	connectionId, err := t.establishConnection()
 	if err != nil {
-		return AnnounceResponse{}, err
+		return AnnounceResponse{},
+			errors.Annotate(err, "tracker announce")
 	}
 
 	transactionId := rand.Uint32()
@@ -151,8 +214,14 @@ func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, 
 	_, err = t.connection.Write(data)
 
 	if err != nil {
-		return AnnounceResponse{}, err
+		return AnnounceResponse{},
+			errors.Annotate(err, "tracker announce")
 	}
+
+	trackerLogger.WithFields(logrus.Fields{
+		"address": t.connection.RemoteAddr(),
+		"event":   request.Event,
+	}).Trace("announce request sent")
 
 	data = make([]byte, 1024)
 	n, err := t.connection.Read(data)
@@ -164,11 +233,16 @@ func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, 
 	response, err = parseAnnounceResponse(data[:n], transactionId)
 
 	if err != nil {
-		return AnnounceResponse{}, err
+		return AnnounceResponse{},
+			errors.NewNotValid(err, "tracker announce")
 	}
 
-	log.Printf("announce with event %d is send: %d peers received, interval %d.\n",
-		request.Event, len(response.Peers), response.AnnounceInterval)
+	trackerLogger.WithFields(logrus.Fields{
+		"address":     t.connection.RemoteAddr(),
+		"interval":    response.AnnounceInterval,
+		"peers_count": len(response.Peers),
+		"peers":       response.Peers,
+	}).Trace("announce response received")
 
 	return response, nil
 
@@ -194,9 +268,9 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 
 	if len(response) != 16 {
 		return 0,
-			fmt.Errorf("parse connection response"+
-				" response has unexpected length %d",
-				len(response))
+			errors.Annotate(
+				errors.Errorf("response has unexpected length %d", len(response)),
+				"parse connection response")
 	}
 
 	actionBytes := response[0:4]
@@ -205,13 +279,16 @@ func parseConnectionResponse(response []byte, expectedTransactionId uint32) (con
 
 	if binary.BigEndian.Uint32(transactionIdBytes) != expectedTransactionId {
 		return 0,
-			fmt.Errorf("parse connection response:" +
-				" transaction id doesn't match expected value")
+			errors.Annotate(
+				errors.Errorf("transaction id doesn't match expected value"),
+				"parse connection response")
 	}
 
 	if binary.BigEndian.Uint32(actionBytes) != 0 {
 		return 0,
-			fmt.Errorf("parse connection response: action != 0")
+			errors.Annotate(
+				errors.Errorf("action is not connect"),
+				"parse connection response")
 	}
 
 	return binary.BigEndian.Uint64(connectionIdBytes), nil
@@ -284,8 +361,9 @@ func parseAnnounceResponse(data []byte, expectedTransactionId uint32) (response 
 
 	if len(data) < 20 {
 		return AnnounceResponse{},
-			fmt.Errorf("parse announce response:"+
-				" message length %d < 20, data = %v", len(data), data)
+			errors.Annotate(
+				errors.Errorf("message length %d < 20, data = %v", len(data), data),
+				"parse connection response")
 	}
 
 	actionBytes := data[0:4]
@@ -296,13 +374,16 @@ func parseAnnounceResponse(data []byte, expectedTransactionId uint32) (response 
 
 	if binary.BigEndian.Uint32(transactionIdBytes) != expectedTransactionId {
 		return AnnounceResponse{},
-			fmt.Errorf("parse announce response:" +
-				" transaction id doesn't match expected value")
+			errors.Annotate(
+				errors.Errorf("transaction id doesn't match expected value"),
+				"parse connection response")
 	}
 
 	if binary.BigEndian.Uint32(actionBytes) != 1 {
 		return AnnounceResponse{},
-			fmt.Errorf("parse announce response: action != 1")
+			errors.Annotate(
+				errors.Errorf("action is not announce"),
+				"parse connection response")
 	}
 
 	response.AnnounceInterval = binary.BigEndian.Uint32(intervalBytes)
@@ -319,8 +400,6 @@ func parseAnnounceResponse(data []byte, expectedTransactionId uint32) (response 
 		addrString := fmt.Sprintf("%d.%d.%d.%d:%d",
 			addrBytes[0], addrBytes[1], addrBytes[2], addrBytes[3],
 			binary.BigEndian.Uint16(addrBytes[4:6]))
-
-		fmt.Println(addrString)
 
 		response.Peers[i] = addrString
 

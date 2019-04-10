@@ -130,14 +130,22 @@ func (d *Download) Start() {
 
 	}()
 
-	d.tracker.Run()
-	d.announce(Started, 100)
+	go func() {
+		d.wait.Add(1)
+		defer d.wait.Done()
+		err = d.tracker.Run()
+		if err != nil {
+			panic(err)
+		}
+	}()
 
 	go func() {
 		d.wait.Add(1)
 		defer d.wait.Done()
 		d.manager.Start()
 	}()
+
+	d.announce(Started, 100)
 
 	d.wait.Wait()
 

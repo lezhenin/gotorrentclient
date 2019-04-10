@@ -29,9 +29,11 @@ func TestTracker_Run(t *testing.T) {
 
 	var wait sync.WaitGroup
 	wait.Add(1)
+
 	go func() {
 		defer wait.Done()
-		tracker.Run()
+		err := tracker.Run()
+		assert.NoError(t, err, "tracker finished with error")
 	}()
 
 	downloaded := rand.Uint64()
@@ -50,24 +52,24 @@ func TestTracker_Run(t *testing.T) {
 
 	buffer := make([]byte, 16)
 	n, err := io.ReadAtLeast(exteriorConn, buffer, 16)
-	assert.NoError(t, err, fmt.Sprintf("Con not read 16 bytes: n = %d", n))
+	assert.NoError(t, err, fmt.Sprintf("can not read 16 bytes: n = %d", n))
 
 	trackerProtocolId := binary.BigEndian.Uint64(buffer[0:8])
 	actionId := binary.BigEndian.Uint32(buffer[8:12])
 
-	assert.EqualValues(t, 0x41727101980, trackerProtocolId, "Wrong protocol ID")
-	assert.EqualValues(t, 0, actionId, "Wrong action ID")
+	assert.EqualValues(t, 0x41727101980, trackerProtocolId, "wrong protocol ID")
+	assert.EqualValues(t, 0, actionId, "wrong action ID")
 
 	copy(buffer[0:8], buffer[8:16])
 	rand.Read(buffer[8:16])
 	connectionId := binary.BigEndian.Uint64(buffer[8:16])
 
 	n, err = exteriorConn.Write(buffer)
-	assert.NoError(t, err, fmt.Sprintf("Con not write 16 bytes: n = %d", n))
+	assert.NoError(t, err, fmt.Sprintf("can not write 16 bytes: n = %d", n))
 
 	buffer = make([]byte, 98)
 	n, err = io.ReadAtLeast(exteriorConn, buffer, 98)
-	assert.NoError(t, err, fmt.Sprintf("Con not read 98 bytes: n = %d", n))
+	assert.NoError(t, err, fmt.Sprintf("can not read 98 bytes: n = %d", n))
 
 	//Offset  Size    Name    Value
 	//0       64-bit integer  connection_id
@@ -87,19 +89,19 @@ func TestTracker_Run(t *testing.T) {
 
 	transactionId := binary.BigEndian.Uint32(buffer[12:16])
 
-	assert.EqualValues(t, connectionId, binary.BigEndian.Uint64(buffer[0:8]), "Wrong connection id")
-	assert.EqualValues(t, 1, binary.BigEndian.Uint32(buffer[8:12]), "Wrong action id")
-	assert.EqualValues(t, 1, binary.BigEndian.Uint32(buffer[8:12]), "Wrong action id")
-	assert.True(t, bytes.Compare(infoHash, buffer[16:36]) == 0, "Wrong info hash")
-	assert.True(t, bytes.Compare(myPeerId, buffer[36:56]) == 0, "Wrong peer id")
-	assert.EqualValues(t, downloaded, binary.BigEndian.Uint64(buffer[56:64]), "Wrong downloaded")
-	assert.EqualValues(t, left, binary.BigEndian.Uint64(buffer[64:72]), "Wrong left")
-	assert.EqualValues(t, uploaded, binary.BigEndian.Uint64(buffer[72:80]), "Wrong uploaded")
-	assert.EqualValues(t, 2, binary.BigEndian.Uint32(buffer[80:84]), "Wrong event id")
-	assert.EqualValues(t, 0, binary.BigEndian.Uint32(buffer[84:88]), "Wrong ip address")
-	assert.EqualValues(t, 0, binary.BigEndian.Uint32(buffer[88:92]), "Wrong key")
-	assert.EqualValues(t, peersCount, binary.BigEndian.Uint32(buffer[92:96]), "Wrong peer count")
-	assert.EqualValues(t, port, binary.BigEndian.Uint16(buffer[96:98]), "Wrong port")
+	assert.EqualValues(t, connectionId, binary.BigEndian.Uint64(buffer[0:8]), "wrong connection id")
+	assert.EqualValues(t, 1, binary.BigEndian.Uint32(buffer[8:12]), "wrong action id")
+	assert.EqualValues(t, 1, binary.BigEndian.Uint32(buffer[8:12]), "wrong action id")
+	assert.True(t, bytes.Compare(infoHash, buffer[16:36]) == 0, "wrong info hash")
+	assert.True(t, bytes.Compare(myPeerId, buffer[36:56]) == 0, "wrong peer id")
+	assert.EqualValues(t, downloaded, binary.BigEndian.Uint64(buffer[56:64]), "wrong downloaded")
+	assert.EqualValues(t, left, binary.BigEndian.Uint64(buffer[64:72]), "wrong left")
+	assert.EqualValues(t, uploaded, binary.BigEndian.Uint64(buffer[72:80]), "wrong uploaded")
+	assert.EqualValues(t, 2, binary.BigEndian.Uint32(buffer[80:84]), "wrong event id")
+	assert.EqualValues(t, 0, binary.BigEndian.Uint32(buffer[84:88]), "wrong ip address")
+	assert.EqualValues(t, 0, binary.BigEndian.Uint32(buffer[88:92]), "wrong key")
+	assert.EqualValues(t, peersCount, binary.BigEndian.Uint32(buffer[92:96]), "wrong peer count")
+	assert.EqualValues(t, port, binary.BigEndian.Uint16(buffer[96:98]), "wrong port")
 
 	//Offset      Size            Name            Value
 	//0           32-bit integer  action          1 // announce
@@ -129,23 +131,161 @@ func TestTracker_Run(t *testing.T) {
 	binary.BigEndian.PutUint16(buffer[30:32], ports[1])
 
 	n, err = exteriorConn.Write(buffer)
-	assert.NoError(t, err, fmt.Sprintf("Can not write 32 bytes: n = %d", n))
+	assert.NoError(t, err, fmt.Sprintf("can not write 32 bytes: n = %d", n))
 
 	response := <-tracker.announceResponseChannel
 
-	assert.EqualValues(t, interval, response.AnnounceInterval, "Wrong announce interval")
-	assert.EqualValues(t, seeders, response.SeedersCount, "Wrong seeder count")
-	assert.EqualValues(t, leechers, response.LechersCount, "Wrong leecher count")
-	assert.EqualValues(t, 2, len(response.Peers), "Wrong peer count")
+	assert.EqualValues(t, interval, response.AnnounceInterval, "wrong announce interval")
+	assert.EqualValues(t, seeders, response.SeedersCount, "wrong seeder count")
+	assert.EqualValues(t, leechers, response.LechersCount, "wrong leecher count")
+	assert.EqualValues(t, 2, len(response.Peers), "wrong peer count")
 
 	for i := 0; i < 2; i++ {
 		ipBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(ipBytes, ips[i])
 		addrString := fmt.Sprintf("%d.%d.%d.%d:%d",
 			ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3], ports[i])
-		assert.EqualValues(t, addrString, response.Peers[i], "Wrong peer address")
+		assert.EqualValues(t, addrString, response.Peers[i], "wrong peer address")
 	}
 
-	//wait.Wait()
+	tracker.close()
+	wait.Wait()
 
+}
+
+func TestTracker_Run_WrongConnectionResponseAction(t *testing.T) {
+
+	infoHash := make([]byte, 20)
+	myPeerId := make([]byte, 20)
+
+	rand.Read(infoHash)
+	rand.Read(myPeerId)
+
+	interiorConn, exteriorConn := net.Pipe()
+
+	tracker, err := NewTracker(myPeerId, infoHash, interiorConn)
+	if err != nil {
+		panic(err)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(1)
+
+	go func() {
+		defer wait.Done()
+		err := tracker.Run()
+		assert.Error(t, err, "tracker finished without error")
+	}()
+
+	tracker.announceRequestChannel <- AnnounceRequest{
+		Started,
+		rand.Uint64(),
+		rand.Uint64(),
+		rand.Uint64(),
+		uint16(rand.Int()),
+		rand.Uint32(),
+	}
+
+	buffer := make([]byte, 16)
+	n, err := io.ReadAtLeast(exteriorConn, buffer, 16)
+	assert.NoError(t, err, fmt.Sprintf("can not read 16 bytes: n = %d", n))
+
+	binary.BigEndian.PutUint32(buffer[0:4], 1)
+	copy(buffer[4:8], buffer[12:16])
+	rand.Read(buffer[8:16])
+
+	n, err = exteriorConn.Write(buffer)
+	assert.NoError(t, err, fmt.Sprintf("can not write 16 bytes: n = %d", n))
+
+	wait.Wait()
+}
+
+func TestTracker_Run_WrongConnectionResponseTransactionId(t *testing.T) {
+
+	infoHash := make([]byte, 20)
+	myPeerId := make([]byte, 20)
+
+	rand.Read(infoHash)
+	rand.Read(myPeerId)
+
+	interiorConn, exteriorConn := net.Pipe()
+
+	tracker, err := NewTracker(myPeerId, infoHash, interiorConn)
+	if err != nil {
+		panic(err)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(1)
+
+	go func() {
+		defer wait.Done()
+		err := tracker.Run()
+		assert.Error(t, err, "tracker finished without error")
+	}()
+
+	tracker.announceRequestChannel <- AnnounceRequest{
+		Started,
+		rand.Uint64(),
+		rand.Uint64(),
+		rand.Uint64(),
+		uint16(rand.Int()),
+		rand.Uint32(),
+	}
+
+	buffer := make([]byte, 16)
+	n, err := io.ReadAtLeast(exteriorConn, buffer, 16)
+	assert.NoError(t, err, fmt.Sprintf("can not read 16 bytes: n = %d", n))
+
+	copy(buffer[0:8], buffer[8:16])
+	buffer[5] += 23
+	rand.Read(buffer[8:16])
+
+	n, err = exteriorConn.Write(buffer[0:16])
+	assert.NoError(t, err, fmt.Sprintf("can not write 16 bytes: n = %d", n))
+
+	wait.Wait()
+}
+
+func TestTracker_Run_WrongConnectionResponseLength(t *testing.T) {
+
+	infoHash := make([]byte, 20)
+	myPeerId := make([]byte, 20)
+
+	rand.Read(infoHash)
+	rand.Read(myPeerId)
+
+	interiorConn, exteriorConn := net.Pipe()
+
+	tracker, err := NewTracker(myPeerId, infoHash, interiorConn)
+	if err != nil {
+		panic(err)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(1)
+
+	go func() {
+		defer wait.Done()
+		err := tracker.Run()
+		assert.Error(t, err, "tracker finished without error")
+	}()
+
+	tracker.announceRequestChannel <- AnnounceRequest{
+		Started,
+		rand.Uint64(),
+		rand.Uint64(),
+		rand.Uint64(),
+		uint16(rand.Int()),
+		rand.Uint32(),
+	}
+
+	buffer := make([]byte, 16)
+	n, err := io.ReadAtLeast(exteriorConn, buffer, 16)
+	assert.NoError(t, err, fmt.Sprintf("can not read 16 bytes: n = %d", n))
+
+	n, err = exteriorConn.Write(buffer[:10])
+	assert.NoError(t, err, fmt.Sprintf("can not write 16 bytes: n = %d", n))
+
+	wait.Wait()
 }

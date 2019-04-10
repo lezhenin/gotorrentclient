@@ -166,7 +166,7 @@ func (s *Seeder) Start() {
 	seederLogger.WithFields(logrus.Fields{
 		"peerId":   s.PeerId,
 		"infoHash": s.InfoHash,
-	}).Info("Seeder run")
+	}).Info("seeder run")
 
 	s.closeGroup.Wait()
 }
@@ -176,7 +176,7 @@ func (s *Seeder) Close() {
 	seederLogger.WithFields(logrus.Fields{
 		"peerId":   s.PeerId,
 		"infoHash": s.InfoHash,
-	}).Info("Seeder closed")
+	}).Info("seeder closed")
 
 	s.closeConnectionOnce.Do(s.closeConnection)
 	s.closeGroup.Wait()
