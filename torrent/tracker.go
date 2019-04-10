@@ -227,7 +227,8 @@ func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, 
 	n, err := t.connection.Read(data)
 
 	if err != nil {
-		return AnnounceResponse{}, err
+		return AnnounceResponse{},
+			errors.Annotate(err, "tracker announce")
 	}
 
 	response, err = parseAnnounceResponse(data[:n], transactionId)
