@@ -359,9 +359,9 @@ func (m *Manager) handleRequestMessage(seeder *Seeder, payload []byte) {
 
 	index, offset, length, _ := ParseRequestPayload(payload)
 
-	if seeder.PeerBitfield.Get(uint(index)) == 1 {
-		return
-	}
+	//if seeder.PeerBitfield.Get(uint(index)) == 1 {
+	//	return
+	//}
 
 	data := make([]byte, length)
 	_, err := m.storage.ReadAt(data, int64(index)*m.info.PieceLength+int64(offset))
