@@ -296,7 +296,6 @@ func (m *Manager) handleBitfiedMessage(seeder *Seeder, payload []byte) {
 	seeder.PeerBitfield, _ = bitfield.NewBitfieldFromBytes(payload, uint(m.pieceCount))
 	interestedPieceCount := bitfield.AndNot(seeder.PeerBitfield, m.downloadedPieceBitfield).Count(1)
 	if interestedPieceCount > 0 && seeder.AmInterested == false {
-		log.Println("DEBUG BITFIELD INTERESTED:", interestedPieceCount)
 		seeder.AmInterested = true
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
@@ -313,7 +312,6 @@ func (m *Manager) handleHaveMessage(seeder *Seeder, payload []byte) {
 
 	seeder.PeerBitfield.Set(uint(pieceIndex))
 	if m.downloadedPieceBitfield.Get(uint(pieceIndex)) == 0 && seeder.AmInterested == false {
-		log.Println("DEBUG HAVE INTERESTED:", m.downloadedPieceBitfield.Get(uint(pieceIndex)))
 		seeder.AmInterested = true
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
@@ -323,10 +321,7 @@ func (m *Manager) handleHaveMessage(seeder *Seeder, payload []byte) {
 func (m *Manager) handleChokeMessage(seeder *Seeder) {
 
 	seeder.PeerChoking = true
-	if seeder.AmInterested == true {
-		seeder.outcoming <- Message{NotInterested, nil, m.peerId}
-		m.interestingPeerCount -= 1
-	}
+
 }
 
 func (m *Manager) handleUnchokeMessage(seeder *Seeder) {
@@ -391,6 +386,11 @@ func (m *Manager) handlePieceMessage(seeder *Seeder, payload []byte) {
 
 	pieceIndex, blockIndex := m.convertOffsetToPieceIndex(index, offset)
 	m.acceptPiece(pieceIndex, blockIndex, data)
+
+	if seeder.PeerChoking || !seeder.AmInterested {
+		return
+	}
+
 	pieceIndex, blockIndex, interested := m.requestPiece(seeder)
 
 	if interested {
@@ -476,7 +476,7 @@ func (m *Manager) requestPiece(seeder *Seeder) (pieceIndex, blockIndex int, inte
 				"pieceIndex": pieceIndex,
 				"blockIndex": blockIndex,
 				"infoHash":   m.infoHash,
-			}).Trace("Block requested")
+			}).Trace("block requested")
 
 			return pieceIndex, blockIndex, true
 		}

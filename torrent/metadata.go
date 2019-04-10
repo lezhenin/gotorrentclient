@@ -3,6 +3,7 @@ package torrent
 import (
 	"crypto/sha1"
 	"fmt"
+	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/zeebo/bencode"
 	"io/ioutil"
@@ -44,16 +45,16 @@ type DecodeError struct {
 }
 
 func (e DecodeError) Error() string {
-	return fmt.Sprintf("Can't decode field '%s': %s", e.FieldName, e.Source)
+	return fmt.Sprintf("can't decode field '%s': %s", e.FieldName, e.Source)
 }
 
-type RequiredFieldError struct {
+type FieldError struct {
 	Source    interface{}
 	FieldName string
 }
 
-func (e RequiredFieldError) Error() string {
-	return fmt.Sprintf("Mandatory field '%s' is absent: %s", e.FieldName, e.Source)
+func (e FieldError) Error() string {
+	return fmt.Sprintf("field '%s' is absent: %s", e.FieldName, e.Source)
 }
 
 type dictionary map[string]interface{}
@@ -67,10 +68,14 @@ func getList(dict dictionary, key string) (value list, err error) {
 		if ok {
 			value = item
 		} else {
-			return list{}, DecodeError{dict[key], key}
+			return list{}, errors.Annotate(
+				DecodeError{dict[key], key},
+				"get list")
 		}
 	} else {
-		return list{}, RequiredFieldError{dict, key}
+		return list{}, errors.Annotate(
+			FieldError{dict, key},
+			"get list")
 	}
 
 	return value, nil
@@ -84,10 +89,14 @@ func getDict(dict dictionary, key string) (value dictionary, err error) {
 		if ok {
 			value = item
 		} else {
-			return dictionary{}, DecodeError{dict[key], key}
+			return dictionary{}, errors.Annotate(
+				DecodeError{dict[key], key},
+				"get dictionary")
 		}
 	} else {
-		return dictionary{}, RequiredFieldError{dict, key}
+		return dictionary{}, errors.Annotate(
+			FieldError{dict, key},
+			"get dictionary")
 	}
 
 	return value, nil
@@ -101,10 +110,14 @@ func getString(dict dictionary, key string) (value string, err error) {
 		if ok {
 			value = item
 		} else {
-			return "", DecodeError{dict[key], key}
+			return "", errors.Annotate(
+				DecodeError{dict[key], key},
+				"get string")
 		}
 	} else {
-		return "", RequiredFieldError{dict, key}
+		return "", errors.Annotate(
+			FieldError{dict, key},
+			"get string")
 	}
 
 	return value, nil
@@ -118,10 +131,14 @@ func getInt(dict dictionary, key string) (value int64, err error) {
 		if ok {
 			value = item
 		} else {
-			return 0, DecodeError{dict[key], key}
+			return 0, errors.Annotate(
+				DecodeError{dict[key], key},
+				"get int")
 		}
 	} else {
-		return 0, RequiredFieldError{dict, key}
+		return 0, errors.Annotate(
+			FieldError{dict, key},
+			"get int")
 	}
 
 	return value, nil
@@ -133,7 +150,7 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 
 	data, err := bencode.EncodeBytes(infoDict)
 	if err != nil {
-		panic(err)
+		return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 	}
 
 	hash := sha1.New()
@@ -142,16 +159,19 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 
 	info.PieceLength, err = getInt(infoDict, "piece length")
 	if err != nil {
-		return Info{}, err
+		return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 	}
 
 	pieces, err := getString(infoDict, "pieces")
 	if err != nil {
-		return Info{}, err
-	} else {
-		info.Pieces = []byte(pieces)
-		info.PieceCount = int64(len(pieces) / 20)
-		// todo assert
+		return Info{}, errors.Annotate(err, "convert info dictionary to struct")
+	}
+
+	info.Pieces = []byte(pieces)
+	info.PieceCount = int64(len(pieces) / 20)
+	if len(pieces)%20 != 0 {
+		return Info{}, errors.Annotate(errors.New("piece count is not a multiple of 20"),
+			"convert info dictionary to struct")
 	}
 
 	private, err := getInt(infoDict, "private")
@@ -161,7 +181,7 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 
 	info.Name, err = getString(infoDict, "name")
 	if err != nil {
-		return Info{}, err
+		return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 	}
 
 	length, err := getInt(infoDict, "length")
@@ -172,7 +192,7 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 	if info.MultiFile {
 		files, err := getList(infoDict, "files")
 		if err != nil {
-			return Info{}, err
+			return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 		}
 
 		for _, file := range files {
@@ -183,7 +203,7 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 
 				pathList, err := getList(fileDict, "path")
 				if err != nil {
-					return Info{}, err
+					return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 				}
 
 				for _, pathItem := range pathList {
@@ -191,13 +211,14 @@ func infoDictToStruct(infoDict map[string]interface{}) (info Info, err error) {
 					if ok {
 						fileInfo.Path = append(fileInfo.Path, pathString)
 					} else {
-						return Info{}, DecodeError{pathItem, "path"}
+						return Info{}, errors.Annotate(DecodeError{pathItem, "path"},
+							"convert info dictionary to struct")
 					}
 				}
 
 				fileInfo.Length, err = getInt(fileDict, "length")
 				if err != nil {
-					return Info{}, err
+					return Info{}, errors.Annotate(err, "convert info dictionary to struct")
 				}
 
 				hashMD5, err := getString(fileDict, "md5sum")
@@ -231,17 +252,20 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 
 	infoDict, err := getDict(metadataDict, "info")
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{},
+			errors.Annotate(err, "convert metadata dictionary to struct")
 	}
 
 	metadata.Info, err = infoDictToStruct(infoDict)
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{},
+			errors.Annotate(err, "convert metadata dictionary to struct")
 	}
 
 	metadata.Announce, err = getString(metadataDict, "announce")
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{},
+			errors.Annotate(err, "convert metadata dictionary to struct")
 	}
 
 	announceList, err := getList(metadataDict, "announce-list")
@@ -263,16 +287,14 @@ func metadataDictToStruct(metadataDict dictionary) (metadata Metadata, err error
 		}
 	}
 
+	// optional fields
+	metadata.Encoding, _ = getString(metadataDict, "encoding")
+	metadata.CreatedBy, _ = getString(metadataDict, "created by")
+	metadata.Comment, _ = getString(metadataDict, "comment")
 	creationDate, err := getInt(metadataDict, "creation date")
 	if err == nil {
 		metadata.CreationDate = time.Unix(creationDate, 0)
 	}
-
-	metadata.Encoding, err = getString(metadataDict, "encoding")
-
-	metadata.CreatedBy, err = getString(metadataDict, "created by")
-
-	metadata.Comment, err = getString(metadataDict, "comment")
 
 	return metadata, nil
 }
@@ -283,25 +305,27 @@ func NewMetadata(filename string) (metadata *Metadata, err error) {
 
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		log.Panicf("Can not read file %s: %s\n", filename, err.Error())
+		return nil, errors.Annotate(err, "new metadata")
 	}
 
 	var bencodedData interface{}
 
 	err = bencode.DecodeBytes(data, &bencodedData)
 	if err != nil {
-		log.Panicf("Can not decode bencoded data from file %s: %s\n", filename, err.Error())
+		return nil, errors.Annotate(err, "new metadata")
 	}
 
 	metadataDict, ok := bencodedData.(map[string]interface{})
 	if !ok {
-		panic(ok)
+		return nil,
+			errors.Annotate(errors.New("root element is not dictionary"),
+				"new metadata")
 	}
 
 	metadata = new(Metadata)
 	*metadata, err = metadataDictToStruct(metadataDict)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "new metadata")
 	}
 
 	metadata.FileName = filename
