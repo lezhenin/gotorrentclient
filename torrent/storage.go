@@ -25,12 +25,7 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 
 		_ = os.Mkdir(path.Dir(filePath), 0777)
 
-		file, err := os.Create(filePath)
-		if err != nil {
-			return nil, err
-		}
-
-		err = file.Truncate(infoFile.Length)
+		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0777)
 		if err != nil {
 			return nil, err
 		}
@@ -38,6 +33,20 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 		fileInfo, err := file.Stat()
 		if err != nil {
 			return nil, err
+		}
+
+		if fileInfo.Size() != infoFile.Length {
+
+			err = file.Truncate(infoFile.Length)
+			if err != nil {
+				return nil, err
+			}
+
+			fileInfo, err = file.Stat()
+			if err != nil {
+				return nil, err
+			}
+
 		}
 
 		s.files = append(s.files, file)
