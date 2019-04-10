@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"github.com/juju/errors"
 	"os"
 	"path"
 )
@@ -42,15 +43,19 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 		s.files = append(s.files, file)
 		s.fileInfos = append(s.fileInfos, fileInfo)
 
-	}
+		s.totalSize += infoFile.Length
 
-	s.totalSize = info.TotalLength
+	}
 
 	return s, nil
 
 }
 
 func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
+
+	if err := s.checkOffset(off, int64(len(b))); err != nil {
+		return 0, err
+	}
 
 	fileOffset, firstFileIndex, fileCount := s.convertToFileOffset(off, int64(len(b)))
 
@@ -99,6 +104,10 @@ func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 }
 
 func (s *Storage) WriteAt(b []byte, off int64) (n int, err error) {
+
+	if err := s.checkOffset(off, int64(len(b))); err != nil {
+		return 0, err
+	}
 
 	fileOffset, firstFileIndex, fileCount := s.convertToFileOffset(off, int64(len(b)))
 
@@ -165,4 +174,21 @@ func (s *Storage) convertToFileOffset(offset, length int64) (fileOffset int64, f
 
 	return fileOffset, firstFileIndex, fileCount
 
+}
+
+func (s *Storage) checkOffset(offset, length int64) (err error) {
+
+	if offset+length > s.totalSize {
+		return errors.Annotate(
+			errors.New("offset + slice length > total size of files"),
+			"storage write at")
+	}
+
+	if offset < 0 {
+		return errors.Annotate(
+			errors.New("offset is negative"),
+			"storage write at")
+	}
+
+	return nil
 }

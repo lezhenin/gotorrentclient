@@ -3,6 +3,7 @@ package torrent
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -10,7 +11,7 @@ import (
 	"testing"
 )
 
-const fileSize = 256 * 1024
+const fileSize = 64 * 1024
 const blockSize = 16 * 1024
 
 func makeTestInfo() (info Info, filnames []string) {
@@ -44,7 +45,7 @@ func prepareStorage(testLabel string) (storage *Storage, files []*os.File) {
 	}
 
 	for _, filename := range filenames {
-		file, err := os.Open(path.Join(dir, filename))
+		file, err := os.OpenFile(path.Join(dir, filename), os.O_RDWR, os.ModePerm)
 		if err != nil {
 			panic(err)
 		}
@@ -63,45 +64,27 @@ func TestStorage_WriteAt_OneFile(t *testing.T) {
 	testData := make([]byte, blockSize)
 	rand.Read(testData)
 
-	// first file write
 	n, err := storage.WriteAt(testData, fileSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if n != blockSize {
-		t.Error()
-	}
+	assert.NoError(t, err, "can not write to storage")
+	assert.EqualValues(t, blockSize, n, "write bytes != block size")
 
 	_, err = files[0].ReadAt(data, fileSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
-	if bytes.Compare(data, testData) != 0 {
-		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
-	}
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
 
-	// second file write
 	rand.Read(testData)
 
 	n, err = storage.WriteAt(testData, fileSize+fileSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if n != blockSize {
-		t.Error()
-	}
+	assert.NoError(t, err, "can not write to storage")
+	assert.EqualValues(t, blockSize, n, "write bytes != block size")
 
 	_, err = files[1].ReadAt(data, fileSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
-	if bytes.Compare(data, testData) != 0 {
-		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
-	}
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
 
 }
 
@@ -117,27 +100,17 @@ func TestStorage_WriteAt_TwoFiles(t *testing.T) {
 	// border write
 
 	n, err := storage.WriteAt(testData, fileSize-blockSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if n != blockSize {
-		t.Error()
-	}
+	assert.NoError(t, err, "can not write to storage")
+	assert.EqualValues(t, blockSize, n, "write bytes != block size")
 
 	_, err = files[0].ReadAt(data[:blockSize/2], fileSize-blockSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
 	_, err = files[1].ReadAt(data[blockSize/2:], 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
-	if bytes.Compare(data, testData) != 0 {
-		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
-	}
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
 
 }
 
@@ -158,31 +131,134 @@ func TestStorage_WriteAt_ThreeFiles(t *testing.T) {
 	rand.Read(testData)
 
 	n, err := storage.WriteAt(testData, fileSize-blockSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if n != fileSize+blockSize {
-		t.Error()
-	}
+	assert.NoError(t, err, "can not write to storage")
+	assert.EqualValues(t, fileSize+blockSize, n, "write bytes != block size")
 
 	_, err = files[0].ReadAt(data[:blockSize/2], fileSize-blockSize/2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
 	_, err = files[1].ReadAt(data[(blockSize/2):(fileSize+blockSize/2)], 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
 	_, err = files[2].ReadAt(data[(fileSize+blockSize/2):], 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err, "can not read from file")
 
-	if bytes.Compare(data, testData) != 0 {
-		t.Errorf("\nWrote data: %v \nRead data:  %v", testData, data)
-	}
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
+}
 
+func TestStorage_ReadAt_OneFile(t *testing.T) {
+
+	storage, files := prepareStorage("TestStorage_ReadAt_OneFile")
+
+	data := make([]byte, blockSize)
+
+	testData := make([]byte, blockSize)
+	rand.Read(testData)
+
+	_, err := files[0].WriteAt(testData, fileSize/2)
+	assert.NoError(t, err, "can not write to file")
+
+	n, err := storage.ReadAt(data, fileSize/2)
+	assert.NoError(t, err, "can not read from storage")
+	assert.EqualValues(t, blockSize, n, "read bytes != block size")
+
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
+
+	rand.Read(testData)
+
+	_, err = files[1].WriteAt(testData, fileSize/2)
+	assert.NoError(t, err, "can not write to file")
+
+	n, err = storage.ReadAt(data, fileSize+fileSize/2)
+	assert.NoError(t, err, "can not read from storage")
+	assert.EqualValues(t, blockSize, n, "read bytes != block size")
+
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
+
+}
+
+func TestStorage_ReadAt_TwoFiles(t *testing.T) {
+
+	storage, files := prepareStorage("TestStorage_ReadAt_TwoFiles")
+
+	data := make([]byte, blockSize)
+
+	testData := make([]byte, blockSize)
+	rand.Read(testData)
+
+	// border write
+
+	_, err := files[0].WriteAt(testData[:blockSize/2], fileSize-blockSize/2)
+	assert.NoError(t, err, "can not write to file")
+
+	_, err = files[1].WriteAt(testData[blockSize/2:], 0)
+	assert.NoError(t, err, "can not write to file")
+
+	n, err := storage.ReadAt(data, fileSize-blockSize/2)
+	assert.NoError(t, err, "can not read from storage")
+	assert.EqualValues(t, blockSize, n, "read bytes != block size")
+
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
+
+}
+
+func TestStorage_ReadAt_ThreeFiles(t *testing.T) {
+
+	storage, files := prepareStorage("TestStorage_WriteAt_ThreeFiles")
+
+	data := make([]byte, blockSize)
+
+	testData := make([]byte, blockSize)
+	rand.Read(testData)
+
+	// large block
+
+	data = make([]byte, fileSize+blockSize)
+
+	testData = make([]byte, fileSize+blockSize)
+	rand.Read(testData)
+
+	_, err := files[0].WriteAt(testData[:blockSize/2], fileSize-blockSize/2)
+	assert.NoError(t, err, "can not write to file")
+
+	_, err = files[1].WriteAt(testData[(blockSize/2):(fileSize+blockSize/2)], 0)
+	assert.NoError(t, err, "can not write to file")
+
+	_, err = files[2].WriteAt(testData[(fileSize+blockSize/2):], 0)
+	assert.NoError(t, err, "can not write to file")
+
+	n, err := storage.ReadAt(data, fileSize-blockSize/2)
+	assert.NoError(t, err, "can not read from storage")
+	assert.EqualValues(t, fileSize+blockSize, n, "read bytes != block size")
+
+	assert.True(t, bytes.Compare(data, testData) == 0,
+		fmt.Sprintf("bytes doesnt match \nwrote data: %v \nread data:  %v", testData, data))
+}
+
+func TestStorage_WriteAt_BreakBoundaries(t *testing.T) {
+
+	storage, _ := prepareStorage("TestStorage_WriteAt_ThreeFiles")
+
+	data := make([]byte, blockSize)
+	_, err := storage.WriteAt(data, fileSize*3-blockSize/2)
+	assert.Error(t, err, "write out of boundaries")
+
+	_, err = storage.WriteAt(data, -blockSize)
+	assert.Error(t, err, "write out of boundaries")
+}
+
+func TestStorage_ReadAt_BreakBoundaries(t *testing.T) {
+
+	storage, _ := prepareStorage("TestStorage_WriteAt_ThreeFiles")
+
+	data := make([]byte, blockSize)
+	_, err := storage.ReadAt(data, fileSize*3-blockSize/2)
+	assert.Error(t, err, "write out of boundaries")
+
+	_, err = storage.ReadAt(data, -blockSize)
+	assert.Error(t, err, "write out of boundaries")
 }
