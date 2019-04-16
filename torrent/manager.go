@@ -71,6 +71,10 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	m.lastRequestedBlock = make(map[string]uint64)
 
 	m.lastPieceLength = info.TotalLength % info.PieceLength
+	if m.lastPieceLength == 0 {
+		m.lastPieceLength = info.PieceLength
+	}
+
 	m.lastBlockLength = m.lastPieceLength % int64(blockLength)
 
 	m.blocksPerLastPiece = uint8(m.lastPieceLength / int64(blockLength))
@@ -146,7 +150,18 @@ func (m *Manager) Start() {
 		"uploaded":   m.state.Uploaded(),
 		"left":       m.state.Left(),
 		"infoHash":   m.infoHash,
-	}).Info("Download started")
+	}).Info("download started")
+
+	managerLogger.WithFields(logrus.Fields{
+		"infoHash":          m.infoHash,
+		"pieceCount":        m.pieceCount,
+		"blockCount":        m.blockCount,
+		"blockPerPiece":     m.blocksPerPiece,
+		"blockPerLastPiece": m.blocksPerLastPiece,
+		"lastPieceLength":   m.lastPieceLength,
+		"lastBlockLength":   m.lastBlockLength,
+		"totalLength":       m.info.TotalLength,
+	}).Debug("download params")
 
 	m.wait.Add(1)
 

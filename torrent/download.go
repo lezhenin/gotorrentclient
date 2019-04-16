@@ -81,13 +81,13 @@ func (d *Download) Start() {
 					if d.State.Stopped() {
 						return
 					}
-
-					_, ok := d.peerStatus[peer]
-					if ok {
-						continue
-					}
-
-					d.peerStatus[peer] = false
+					//
+					//_, ok := d.peerStatus[peer]
+					//if ok {
+					//	continue
+					//}
+					//
+					//d.peerStatus[peer] = false
 
 					addr, err := net.ResolveTCPAddr("tcp", peer)
 					if err != nil {
@@ -107,7 +107,7 @@ func (d *Download) Start() {
 						continue
 					}
 
-					d.peerStatus[peer] = true
+					//d.peerStatus[peer] = true
 
 				}
 
@@ -216,6 +216,7 @@ func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err erro
 	}
 
 	d.peerStatus = make(map[string]bool)
+	d.Done = make(chan struct{})
 
 	d.announceTimer = time.NewTimer(0)
 	<-d.announceTimer.C
