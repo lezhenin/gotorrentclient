@@ -1,31 +1,37 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/lezhenin/gotorrentclient/pkg/torrent"
 	"os"
+	"os/signal"
 	"sync"
 )
 
 func main() {
 
-	args := os.Args
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
 
-	if len(args) < 3 {
-		panic(args)
+	torrentFilePath := flag.String("t", "", "Path to .torrent file")
+	downloadDirPath := flag.String("o", "", "Path to output directory")
+	keepSeeding := flag.Bool("s", false, "Keep seeding when download finished")
+
+	flag.Parse()
+
+	if *torrentFilePath == "" || *downloadDirPath == "" {
+		fmt.Println("Path to .torrent file or output directory is not specified")
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	fmt.Println(args)
-
-	torrentFile := os.Args[1]
-	folder := os.Args[2]
-
-	metadata, err := torrent.NewMetadata(torrentFile)
+	metadata, err := torrent.NewMetadata(*torrentFilePath)
 	if err != nil {
 		panic(err)
 	}
 
-	download, err := torrent.NewDownload(metadata, folder)
+	download, err := torrent.NewDownload(metadata, *downloadDirPath)
 
 	var wait sync.WaitGroup
 	wait.Add(1)
@@ -35,11 +41,20 @@ func main() {
 		download.Start()
 	}()
 
-	<-download.Done
-	download.Stop()
+	for {
 
-	wait.Wait()
-
-	fmt.Println("Done")
+		select {
+		case <-download.Done:
+			if !*keepSeeding {
+				download.Stop()
+				wait.Wait()
+				os.Exit(0)
+			}
+		case <-signals:
+			download.Stop()
+			wait.Wait()
+			os.Exit(130)
+		}
+	}
 
 }
