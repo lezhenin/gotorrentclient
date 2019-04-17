@@ -4,7 +4,7 @@ RUN npm install -g webtorrent-cli
 
 WORKDIR /usr/torrent-test
 
-ADD test ./original
+ADD ./test/test_download ./download
 
 RUN chmod -R +x .
 
