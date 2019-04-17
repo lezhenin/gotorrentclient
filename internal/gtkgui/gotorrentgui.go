@@ -1,4 +1,4 @@
-package gui
+package gtkgui
 
 import (
 	"github.com/gotk3/gotk3/glib"
@@ -6,13 +6,13 @@ import (
 	"log"
 )
 
-type GTorrent struct {
+type GoTorrentGui struct {
 	application *gtk.Application
 }
 
-func NewGTorrent() (gTorrent *GTorrent, err error) {
+func NewGoTorrentGui() (gTorrent *GoTorrentGui, err error) {
 
-	gTorrent = new(GTorrent)
+	gTorrent = new(GoTorrentGui)
 
 	gTorrent.application, err = gtk.ApplicationNew("com.github.lezhenin.gtorrent", glib.APPLICATION_FLAGS_NONE)
 	if err != nil {
@@ -30,13 +30,13 @@ func NewGTorrent() (gTorrent *GTorrent, err error) {
 
 }
 
-func (g *GTorrent) Run() (status int) {
+func (g *GoTorrentGui) Run() (status int) {
 
 	return g.application.Run([]string{})
 
 }
 
-func (g *GTorrent) onActivation() {
+func (g *GoTorrentGui) onActivation() {
 
 	log.Println("Activate")
 

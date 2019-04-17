@@ -3,7 +3,7 @@ package torrent
 import (
 	"bytes"
 	"crypto/sha1"
-	"github.com/lezhenin/gotorrentclient/bitfield"
+	"github.com/lezhenin/gotorrentclient/pkg/bitfield"
 	"github.com/sirupsen/logrus"
 	"log"
 	"net"

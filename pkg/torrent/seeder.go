@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"github.com/juju/errors"
-	"github.com/lezhenin/gotorrentclient/bitfield"
+	"github.com/lezhenin/gotorrentclient/pkg/bitfield"
 	"github.com/sirupsen/logrus"
 	"io"
 	"net"

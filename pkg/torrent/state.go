@@ -1,7 +1,7 @@
 package torrent
 
 import (
-	"github.com/lezhenin/gotorrentclient/bitfield"
+	"github.com/lezhenin/gotorrentclient/pkg/bitfield"
 	"sync"
 )
 

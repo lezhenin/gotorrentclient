@@ -1,8 +1,8 @@
-package test
+package main
 
 import (
 	"fmt"
-	"github.com/lezhenin/gotorrentclient/torrent"
+	"github.com/lezhenin/gotorrentclient/pkg/torrent"
 	"os"
 	"sync"
 )
