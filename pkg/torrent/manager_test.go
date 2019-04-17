@@ -13,7 +13,7 @@ import (
 
 func TestManager_Start(t *testing.T) {
 
-	filename := "../test/DA3F.torrent"
+	filename := "../../test/test_download/test_data_localhost.torrent"
 	metadata, err := NewMetadata(filename)
 	assert.NoError(t, err, "can not decode metadata")
 
@@ -53,7 +53,7 @@ func TestManager_Start(t *testing.T) {
 
 	exteriorSeeder, _ := makeTestSeeder(infoHash, exteriorPeerId)
 
-	exteriorStorage, err := NewStorage(metadata.Info, "../test")
+	exteriorStorage, err := NewStorage(metadata.Info, "../../test/test_download/")
 
 	var seederWait sync.WaitGroup
 	seederWait.Add(1)

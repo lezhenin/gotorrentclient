@@ -26,12 +26,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Printf("Download %s to %s\n", *torrentFilePath, *downloadDirPath)
+
 	metadata, err := torrent.NewMetadata(*torrentFilePath)
 	if err != nil {
 		panic(err)
 	}
 
 	download, err := torrent.NewDownload(metadata, *downloadDirPath)
+
+	if err != nil {
+		panic(err)
+	}
 
 	var wait sync.WaitGroup
 	wait.Add(1)

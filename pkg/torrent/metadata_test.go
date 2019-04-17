@@ -10,7 +10,7 @@ import (
 
 func TestNewMetadata(t *testing.T) {
 
-	filename := "../test/DA3F.torrent"
+	filename := "../../test/test.torrent"
 	metadata, err := NewMetadata(filename)
 	assert.NoError(t, err, "can not decode metadata")
 
@@ -22,7 +22,7 @@ func TestNewMetadata(t *testing.T) {
 
 func TestNewMetadata_WrongPiecesCount(t *testing.T) {
 
-	filename := "../test/DA3F.torrent"
+	filename := "../../test/test.torrent"
 	file, err := os.Open(filename)
 	assert.NoError(t, err, "can not open file")
 

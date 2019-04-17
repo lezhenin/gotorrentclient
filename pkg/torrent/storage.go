@@ -4,6 +4,7 @@ import (
 	"github.com/juju/errors"
 	"os"
 	"path"
+	"path/filepath"
 )
 
 type Storage struct {
@@ -23,28 +24,31 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 			filePath = path.Join(filePath, pathPart)
 		}
 
-		_ = os.Mkdir(path.Dir(filePath), 0777)
-
-		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0777)
+		err = os.MkdirAll(filepath.Dir(filePath), 0775)
 		if err != nil {
-			return nil, err
+			return nil, errors.Annotate(err, "new storage")
+		}
+
+		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0775)
+		if err != nil {
+			return nil, errors.Annotate(err, "new storage")
 		}
 
 		fileInfo, err := file.Stat()
 		if err != nil {
-			return nil, err
+			return nil, errors.Annotate(err, "new storage")
 		}
 
 		if fileInfo.Size() != infoFile.Length {
 
 			err = file.Truncate(infoFile.Length)
 			if err != nil {
-				return nil, err
+				return nil, errors.Annotate(err, "new storage")
 			}
 
 			fileInfo, err = file.Stat()
 			if err != nil {
-				return nil, err
+				return nil, errors.Annotate(err, "new storage")
 			}
 
 		}
@@ -63,7 +67,7 @@ func NewStorage(info Info, basePath string) (s *Storage, err error) {
 func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 
 	if err := s.checkOffset(off, int64(len(b))); err != nil {
-		return 0, err
+		return 0, errors.Annotate(err, "storage read at")
 	}
 
 	fileOffset, firstFileIndex, fileCount := s.convertToFileOffset(off, int64(len(b)))
@@ -90,7 +94,7 @@ func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 		n, err := s.files[i].ReadAt(b[readBytes:readBytes+blockSize], currentOffset)
 
 		if err != nil {
-			return 0, err
+			return 0, errors.Annotate(err, "storage read at")
 		}
 
 		if int64(n) != blockSize {
@@ -115,7 +119,7 @@ func (s *Storage) ReadAt(b []byte, off int64) (n int, err error) {
 func (s *Storage) WriteAt(b []byte, off int64) (n int, err error) {
 
 	if err := s.checkOffset(off, int64(len(b))); err != nil {
-		return 0, err
+		return 0, errors.Annotate(err, "storage write at")
 	}
 
 	fileOffset, firstFileIndex, fileCount := s.convertToFileOffset(off, int64(len(b)))
@@ -140,7 +144,7 @@ func (s *Storage) WriteAt(b []byte, off int64) (n int, err error) {
 		n, err := s.files[i].WriteAt(b[wroteBytes:wroteBytes+blockSize], currentOffset)
 
 		if err != nil {
-			return 0, err
+			return 0, errors.Annotate(err, "storage write at")
 		}
 
 		if int64(n) != blockSize {
@@ -190,13 +194,13 @@ func (s *Storage) checkOffset(offset, length int64) (err error) {
 	if offset+length > s.totalSize {
 		return errors.Annotate(
 			errors.New("offset + slice length > total size of files"),
-			"storage write at")
+			"check offset")
 	}
 
 	if offset < 0 {
 		return errors.Annotate(
 			errors.New("offset is negative"),
-			"storage write at")
+			"check offset")
 	}
 
 	return nil
