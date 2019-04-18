@@ -1,9 +1,9 @@
-FROM golang:1.8
+FROM golang:latest
 
 WORKDIR /go/src/github.com/lezhenin/gotorrentclient
 
 ADD . .
 
-RUN go get -d -v ./...
+RUN go get -d -t -v ./...
 
-ENTRYPOINT go test -timeout 1m -cover  ./pkg/torrent
+ENTRYPOINT go test -timeout 1m -cover -v ./pkg/torrent

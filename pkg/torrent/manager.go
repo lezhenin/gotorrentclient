@@ -279,7 +279,7 @@ func (m *Manager) handleMessage(message *Message) {
 	seeder, ok := m.getSeeder(message.PeerId)
 
 	if !ok {
-		managerLogger.Debug("Peer with id %v is not found. Ignore message.", message.PeerId)
+		managerLogger.Debugf("Peer with id %v is not found. Ignore message.", message.PeerId)
 		return
 	}
 

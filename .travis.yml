@@ -1,0 +1,10 @@
+language: ruby
+
+services:
+  - docker
+
+before_script:
+  - docker build -f ./build/docker-ci/Dockerfile . -t gotorrent-ci
+
+script:
+  - docker run gotorrent-ci
