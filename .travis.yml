@@ -11,7 +11,7 @@ jobs:
       script:
         - docker run gotorrent-ci
     - stage: "Integration Tests"
-    - name: "Test Download"
+      name: "Test Download"
       before_script:
         - ./scripts/test/build_dockers.sh
       script:
