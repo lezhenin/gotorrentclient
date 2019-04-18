@@ -11,6 +11,17 @@ const (
 	SeederLogger  LoggerType = 0
 	TrackerLogger LoggerType = 1
 	ManagerLogger LoggerType = 2
+	AllLoggers    LoggerType = 3
+)
+
+type LoggerLevel logrus.Level
+
+const (
+	ErrorLevel   LoggerLevel = LoggerLevel(logrus.ErrorLevel)
+	WarningLevel LoggerLevel = LoggerLevel(logrus.WarnLevel)
+	InfoLevel    LoggerLevel = LoggerLevel(logrus.InfoLevel)
+	DebugLevel   LoggerLevel = LoggerLevel(logrus.DebugLevel)
+	TraceLevel   LoggerLevel = LoggerLevel(logrus.TraceLevel)
 )
 
 var logsDir = "./logs"
@@ -42,6 +53,25 @@ func init() {
 }
 
 func SetLoggerOutput(loggerType LoggerType, writer io.Writer) {
-	logger := loggers[loggerType]
-	logger.SetOutput(writer)
+
+	if loggerType == AllLoggers {
+		for _, v := range loggers {
+			v.SetOutput(writer)
+		}
+	} else {
+		logger := loggers[loggerType]
+		logger.SetOutput(writer)
+	}
+}
+
+func SetLoggerLevel(loggerType LoggerType, level LoggerLevel) {
+
+	if loggerType == AllLoggers {
+		for _, v := range loggers {
+			v.SetLevel(logrus.Level(level))
+		}
+	} else {
+		logger := loggers[loggerType]
+		logger.SetLevel(logrus.Level(level))
+	}
 }

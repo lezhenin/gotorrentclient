@@ -51,6 +51,8 @@ func (d *Download) Start() {
 		panic(err)
 	}
 
+	d.ListenPort = uint16(listener.Port)
+
 	go func() {
 		d.wait.Add(1)
 		defer d.wait.Done()
@@ -110,8 +112,6 @@ func (d *Download) Start() {
 					//d.peerStatus[peer] = true
 
 				}
-
-				log.Printf("OUT")
 
 			case conn := <-listener.Connections:
 				_ = d.manager.AddSeeder(conn, true)

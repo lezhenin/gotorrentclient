@@ -227,6 +227,12 @@ func (m *Manager) handleAdding(seeder *Seeder) {
 		seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
 	}
 
+	managerLogger.WithFields(logrus.Fields{
+		"peerId":   seeder.PeerId,
+		"data":     m.state.BitfieldBytes(),
+		"infoHash": m.infoHash,
+	}).Info("received sent")
+
 	go func() {
 		seeder.Start()
 		m.closedSeeders <- seeder
@@ -315,6 +321,14 @@ func (m *Manager) handleBitfiedMessage(seeder *Seeder, payload []byte) {
 		seeder.outcoming <- Message{Interested, nil, m.peerId}
 		m.interestingPeerCount += 1
 	}
+
+	managerLogger.WithFields(logrus.Fields{
+		"peerId":   seeder.PeerId,
+		"data":     payload,
+		"count":    seeder.PeerBitfield.Count(1),
+		"infoHash": m.infoHash,
+	}).Info("received bitfield")
+
 }
 
 func (m *Manager) handleHaveMessage(seeder *Seeder, payload []byte) {

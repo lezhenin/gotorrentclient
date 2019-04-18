@@ -221,6 +221,7 @@ func (t *Tracker) announce(request AnnounceRequest) (response AnnounceResponse, 
 	trackerLogger.WithFields(logrus.Fields{
 		"address": t.connection.RemoteAddr(),
 		"event":   request.Event,
+		"port":    request.Port,
 	}).Trace("announce request sent")
 
 	data = make([]byte, 1024)
