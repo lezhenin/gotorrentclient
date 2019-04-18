@@ -3,8 +3,16 @@ language: generic
 services:
   - docker
 
-before_script:
-  - docker build -f ./build/docker-ci/Dockerfile . -t gotorrent-ci
-
-script:
-  - docker run gotorrent-ci
+jobs:
+  include:
+    - stage: "Unit Tests"
+      before_script:
+        - docker build -f ./build/docker-ci/Dockerfile . -t gotorrent-ci
+      script:
+        - docker run gotorrent-ci
+    - stage: "Integration Tests"
+    - name: "Test Download"
+      before_script:
+        - ./scripts/test/build_dockers.sh
+      script:
+        - ./scripts/test/test_download.sh
