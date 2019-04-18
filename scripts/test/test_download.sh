@@ -23,7 +23,7 @@ sleep 5
 echo "run leeching client"
 timeout --signal=SIGINT ${TIMOUT_SECS} \
 docker exec test-leecher \
-gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -v 4
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -v 3
 
 TIMOUT_RETURN_CODE=$?
 if [[ ${TIMOUT_RETURN_CODE} -ne 0 ]]; then
