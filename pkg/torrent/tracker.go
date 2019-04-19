@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const connectionLifetime = time.Minute
+
 type Event uint32
 
 const (
@@ -189,7 +191,7 @@ func (t *Tracker) establishConnection() (connectionId uint64, err error) {
 	}
 
 	t.expire = false
-	t.expirationTimer.Reset(time.Minute)
+	t.expirationTimer.Reset(connectionLifetime)
 
 	trackerLogger.WithFields(logrus.Fields{
 		"address":       t.connection.RemoteAddr(),

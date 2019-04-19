@@ -191,6 +191,11 @@ func (s *Seeder) closeChannels() {
 
 func (s *Seeder) closeConnection() {
 
+	seederLogger.WithFields(logrus.Fields{
+		"peerId":   s.PeerId,
+		"infoHash": s.InfoHash,
+	}).Debug("seeder connection closed")
+
 	s.closeChan <- struct{}{}
 	s.closeChan <- struct{}{}
 
