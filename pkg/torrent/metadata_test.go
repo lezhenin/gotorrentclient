@@ -8,21 +8,45 @@ import (
 	"testing"
 )
 
-func TestNewMetadata(t *testing.T) {
+func TestNewMetadata_MultiFile(t *testing.T) {
 
-	filename := "../../test/test.torrent"
+	filename := "../../test/test_download/test_data_multi_file.torrent"
 	metadata, err := NewMetadata(filename)
 	assert.NoError(t, err, "can not decode metadata")
 
 	assert.EqualValues(t, filename, metadata.FileName, "file name doesnt match")
-	assert.EqualValues(t, "udp://127.0.0.1:3515", metadata.Announce, "announce url doesnt match")
+	assert.EqualValues(t, "udp://198.51.100.5:8000", metadata.Announce, "announce url doesnt match")
+	assert.Len(t, metadata.AnnounceList, 1, "announce outer list len doesnt match")
+	assert.Len(t, metadata.AnnounceList[0], 2, "announce inner list len doesnt match")
+	assert.EqualValues(t, "udp://198.51.100.5:8000", metadata.AnnounceList[0][0], "announce in list doesnt match")
+	assert.EqualValues(t, "http://198.51.100.6/announce", metadata.AnnounceList[0][1], "announce in list doesnt match")
+	assert.EqualValues(t, "a comment", metadata.Comment, "comment doesnt match")
 	assert.True(t, metadata.Info.MultiFile, "metadata is not multi-file")
-	assert.EqualValues(t, 32*1024, metadata.Info.PieceLength, "wrong piece length")
+	assert.EqualValues(t, 32*1024, metadata.Info.PieceLength, "piece length doesnt match")
+	assert.EqualValues(t, 3*1024*1024, metadata.Info.TotalLength, "total length doesnt match")
+}
+
+func TestNewMetadata_SingleFile(t *testing.T) {
+
+	filename := "../../test/test_download/test_data_single_file.torrent"
+	metadata, err := NewMetadata(filename)
+	assert.NoError(t, err, "can not decode metadata")
+
+	assert.EqualValues(t, filename, metadata.FileName, "file name doesnt match")
+	assert.EqualValues(t, "udp://198.51.100.5:8000", metadata.Announce, "announce url doesnt match")
+	assert.Len(t, metadata.AnnounceList, 1, "announce outer list len doesnt match")
+	assert.Len(t, metadata.AnnounceList[0], 2, "announce inner list len doesnt match")
+	assert.EqualValues(t, "udp://198.51.100.5:8000", metadata.AnnounceList[0][0], "announce in list doesnt match")
+	assert.EqualValues(t, "http://198.51.100.6/announce", metadata.AnnounceList[0][1], "announce in list doesnt match")
+	assert.EqualValues(t, "a comment", metadata.Comment, "comment doesnt match")
+	assert.False(t, metadata.Info.MultiFile, "metadata is not multi-file")
+	assert.EqualValues(t, 32*1024, metadata.Info.PieceLength, "piece length doesnt match")
+	assert.EqualValues(t, 1*1024*1024, metadata.Info.TotalLength, "total length doesnt match")
 }
 
 func TestNewMetadata_WrongPiecesCount(t *testing.T) {
 
-	filename := "../../test/test.torrent"
+	filename := "../../test/test_download/test_data_multi_file.torrent"
 	file, err := os.Open(filename)
 	assert.NoError(t, err, "can not open file")
 
