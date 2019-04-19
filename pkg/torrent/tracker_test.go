@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+//func TestMain(m *testing.M) {
+//
+//	if testing.Verbose() {
+//		SetLoggerLevel(AllLoggers, TraceLevel)
+//	} else {
+//		SetLoggerLevel(AllLoggers, PanicLevel)
+//	}
+//
+//	code := m.Run()
+//	os.Exit(code)
+//}
+
 func TestTracker_Run(t *testing.T) {
 
 	infoHash := make([]byte, 20)
