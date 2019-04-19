@@ -6,4 +6,4 @@ ADD . .
 
 RUN go get -d -t -v ./...
 
-ENTRYPOINT go test -timeout 1m -cover -v ./pkg/torrent
+ENTRYPOINT go test -timeout 5m -cover -v ./pkg/torrent
