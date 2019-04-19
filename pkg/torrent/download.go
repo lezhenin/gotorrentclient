@@ -53,8 +53,9 @@ func (d *Download) Start() {
 
 	d.ListenPort = uint16(listener.Port)
 
+	d.wait.Add(4)
+
 	go func() {
-		d.wait.Add(1)
 		defer d.wait.Done()
 		err = listener.Start()
 		log.Println(err)
@@ -62,13 +63,16 @@ func (d *Download) Start() {
 
 	go func() {
 
-		d.wait.Add(1)
 		defer d.wait.Done()
 
 		for !d.State.Stopped() {
 
+			log.Println("ITER")
+
 			select {
 			case response := <-d.tracker.announceResponseChannel:
+
+				log.Println("RESPONSE")
 
 				interval := time.Duration(response.AnnounceInterval)
 				d.announceTimer.Reset(time.Second * interval)
@@ -114,33 +118,43 @@ func (d *Download) Start() {
 				}
 
 			case conn := <-listener.Connections:
+				log.Println("CONNECTION")
+
 				_ = d.manager.AddSeeder(conn, true)
 
 			case <-d.manager.Done:
+				log.Println("DONE")
+
 				d.completed = true
 				d.announce(Completed, 0)
 				d.State.SetFinished(true)
 				d.Done <- struct{}{}
 
 			case <-d.announceTimer.C:
+				log.Println("ANNOUNCE")
+
 				d.announce(None, 50)
 			}
 
 		}
 
+		log.Println("CLOSE")
+
+		listener.Close()
+		d.tracker.Close()
+
 	}()
 
 	go func() {
-		d.wait.Add(1)
 		defer d.wait.Done()
 		err = d.tracker.Run()
 		if err != nil {
+			log.Error(err)
 			panic(err)
 		}
 	}()
 
 	go func() {
-		d.wait.Add(1)
 		defer d.wait.Done()
 		d.manager.Start()
 	}()
