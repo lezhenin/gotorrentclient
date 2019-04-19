@@ -17,6 +17,7 @@ const (
 type LoggerLevel logrus.Level
 
 const (
+	PanicLevel   LoggerLevel = LoggerLevel(logrus.PanicLevel)
 	ErrorLevel   LoggerLevel = LoggerLevel(logrus.ErrorLevel)
 	WarningLevel LoggerLevel = LoggerLevel(logrus.WarnLevel)
 	InfoLevel    LoggerLevel = LoggerLevel(logrus.InfoLevel)
