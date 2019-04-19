@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestNewMetadata_MultiFile(t *testing.T) {
+func TestMetadata_New_MultiFile(t *testing.T) {
 
 	filename := "../../test/test_download/test_data_multi_file.torrent"
 	metadata, err := NewMetadata(filename)
@@ -26,7 +26,7 @@ func TestNewMetadata_MultiFile(t *testing.T) {
 	assert.EqualValues(t, 3*1024*1024, metadata.Info.TotalLength, "total length doesnt match")
 }
 
-func TestNewMetadata_SingleFile(t *testing.T) {
+func TestMetadata_New_SingleFile(t *testing.T) {
 
 	filename := "../../test/test_download/test_data_single_file.torrent"
 	metadata, err := NewMetadata(filename)
@@ -44,7 +44,7 @@ func TestNewMetadata_SingleFile(t *testing.T) {
 	assert.EqualValues(t, 1*1024*1024, metadata.Info.TotalLength, "total length doesnt match")
 }
 
-func TestNewMetadata_WrongPiecesCount(t *testing.T) {
+func TestMetadata_New_WrongPiecesCount(t *testing.T) {
 
 	filename := "../../test/test_download/test_data_multi_file.torrent"
 	file, err := os.Open(filename)

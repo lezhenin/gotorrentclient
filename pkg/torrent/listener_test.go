@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestNewListener(t *testing.T) {
+func TestListener_New(t *testing.T) {
 
 	listeners := make([]*Listener, 5)
 	//var err error
