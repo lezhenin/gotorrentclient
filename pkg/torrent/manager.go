@@ -76,6 +76,9 @@ func NewManager(peerId, infoHash []byte, info *Info, state *State, storage *Stor
 	}
 
 	m.lastBlockLength = m.lastPieceLength % int64(blockLength)
+	if m.lastBlockLength == 0 {
+		m.lastBlockLength = int64(blockLength)
+	}
 
 	m.blocksPerLastPiece = uint8(m.lastPieceLength / int64(blockLength))
 	if m.lastPieceLength%int64(blockLength) > 0 {
@@ -225,13 +228,13 @@ func (m *Manager) handleAdding(seeder *Seeder) {
 
 	if m.state.Downloaded() > 0 {
 		seeder.outcoming <- Message{Bitfield, m.state.BitfieldBytes(), m.peerId}
-	}
+		managerLogger.WithFields(logrus.Fields{
+			"peerId":   seeder.PeerId,
+			"data":     m.state.BitfieldBytes(),
+			"infoHash": m.infoHash,
+		}).Info("bitfield sent")
 
-	managerLogger.WithFields(logrus.Fields{
-		"peerId":   seeder.PeerId,
-		"data":     m.state.BitfieldBytes(),
-		"infoHash": m.infoHash,
-	}).Info("received sent")
+	}
 
 	go func() {
 		seeder.Start()
