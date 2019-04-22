@@ -2,10 +2,12 @@ package torrent
 
 import (
 	"crypto/rand"
+	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,105 +29,166 @@ type Download struct {
 
 	peerStatus map[string]bool
 
-	Done   chan struct{}
-	Errors chan error
-
-	completed bool
+	Done chan struct{}
 
 	announceTimer *time.Timer
 
-	wait sync.WaitGroup
+	wg sync.WaitGroup
+
+	exit                   bool
+	exitTimer              *time.Timer
+	unhandledAnnounceCount int32
 }
 
-func (d *Download) Start() {
+func (d *Download) Start() (err error) {
 
 	if !d.State.Stopped() {
 		return
 	}
 
-	d.State.SetStopped(false)
+	d.wg.Add(4)
+
+	// drain timer
+	<-d.exitTimer.C
+
+	// tracker
+
+	announceUrl, _ := url.Parse(d.Metadata.Announce)
+	conn, _ := net.Dial("udp", announceUrl.Host)
+
+	d.tracker, err = NewTracker(d.PeerId, d.InfoHash, conn)
+	if err != nil {
+		err = errors.Annotate(err, "download start")
+		log.WithFields(log.Fields{
+			"infoHash": d.InfoHash,
+		}).Error(err)
+		return err
+	}
+
+	go func() {
+		defer d.wg.Done()
+		err = d.tracker.Run()
+		if err != nil {
+			err = errors.Annotate(err, "download start")
+			log.WithFields(log.Fields{
+				"infoHash": d.InfoHash,
+			}).Error(err)
+		}
+	}()
+
+	// listener
 
 	listener, err := NewListener(8861, 8871)
 	if err != nil {
-		//todo
-		panic(err)
+		err = errors.Annotate(err, "download start")
+		log.WithFields(log.Fields{
+			"infoHash": d.InfoHash,
+		}).Error(err)
+		return err
 	}
 
 	d.ListenPort = uint16(listener.Port)
 
-	d.wait.Add(4)
-
 	go func() {
-		defer d.wait.Done()
+		defer d.wg.Done()
 		err = listener.Start()
-		log.Println(err)
+		if err != nil {
+			err = errors.Annotate(err, "download start")
+			log.WithFields(log.Fields{
+				"infoHash": d.InfoHash,
+			}).Error(err)
+		}
 	}()
 
+	// manager
+
+	go func() {
+		defer d.wg.Done()
+		d.manager.Start()
+	}()
+
+	// main routine
+
+	d.exit = false
+	log.Debug(d.exit)
+
 	go func() {
 
-		defer d.wait.Done()
+		defer d.wg.Done()
 
-		for !d.State.Stopped() {
+		for !d.exit {
 
 			select {
 			case response := <-d.tracker.announceResponseChannel:
 
+				atomic.AddInt32(&d.unhandledAnnounceCount, -1)
+
 				interval := time.Duration(response.AnnounceInterval)
 				d.announceTimer.Reset(time.Second * interval)
 
-				if d.completed {
+				if atomic.LoadInt32(&d.unhandledAnnounceCount) == 0 && d.State.Stopped() {
+					d.exit = true
 					continue
 				}
 
-				// todo stopSignals while connecting
+				if d.State.Finished() || d.State.Stopped() {
+					continue
+				}
+
 				for _, peer := range response.Peers {
 
-					if d.State.Stopped() {
-						return
+					if d.State.Finished() || d.State.Stopped() {
+						break
 					}
-					//
-					//_, ok := d.peerStatus[peer]
-					//if ok {
-					//	continue
-					//}
-					//
-					//d.peerStatus[peer] = false
 
 					addr, err := net.ResolveTCPAddr("tcp", peer)
 					if err != nil {
-						log.Println(err)
+						err = errors.Annotate(err, "download start")
+						log.WithFields(log.Fields{
+							"infoHash": d.InfoHash,
+						}).Error(err)
 						continue
 					}
 
 					conn, err := net.DialTimeout(addr.Network(), addr.String(), time.Second)
 					if err != nil {
-						log.Println(err)
+						err = errors.Annotate(err, "download start")
+						log.WithFields(log.Fields{
+							"infoHash": d.InfoHash,
+						}).Error(err)
 						continue
 					}
 
 					err = d.manager.AddSeeder(conn, false)
 					if err != nil {
-						log.Println(err)
+						err = errors.Annotate(err, "download start")
+						log.WithFields(log.Fields{
+							"infoHash": d.InfoHash,
+						}).Error(err)
 						continue
 					}
-
-					//d.peerStatus[peer] = true
 
 				}
 
 			case conn := <-listener.Connections:
+				log.Debug("conn accept")
 				_ = d.manager.AddSeeder(conn, true)
 
 			case <-d.manager.Done:
-				d.completed = true
-				d.announce(Completed, 0)
+				log.Debug("done")
 				d.State.SetFinished(true)
+				d.announce(Completed, 0)
 				d.Done <- struct{}{}
 
 			case <-d.announceTimer.C:
+				log.Debug("announce timer")
 				d.announce(None, 50)
-			}
 
+			case <-d.exitTimer.C:
+				log.Debug("exit timer")
+				d.exit = true
+				d.exitTimer.Reset(0)
+			}
 		}
 
 		listener.Close()
@@ -133,23 +196,13 @@ func (d *Download) Start() {
 
 	}()
 
-	go func() {
-		defer d.wait.Done()
-		err = d.tracker.Run()
-		if err != nil {
-			log.Error(err)
-			panic(err)
-		}
-	}()
-
-	go func() {
-		defer d.wait.Done()
-		d.manager.Start()
-	}()
+	d.State.SetStopped(false)
 
 	d.announce(Started, 100)
 
-	d.wait.Wait()
+	d.wg.Wait()
+
+	return nil
 
 }
 
@@ -161,11 +214,17 @@ func (d *Download) Stop() {
 
 	d.manager.Stop()
 	d.announce(Stopped, 0)
+	d.exitTimer.Reset(time.Second * 5)
 
 	d.State.SetStopped(true)
+
+	d.wg.Wait()
+
 }
 
 func (d *Download) announce(event Event, peersCount uint32) {
+
+	atomic.AddInt32(&d.unhandledAnnounceCount, 1)
 
 	d.tracker.announceRequestChannel <- AnnounceRequest{
 		event,
@@ -173,7 +232,9 @@ func (d *Download) announce(event Event, peersCount uint32) {
 		d.State.Uploaded(),
 		d.State.Left(),
 		d.ListenPort,
-		peersCount}
+		peersCount,
+	}
+
 }
 
 func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err error) {
@@ -207,21 +268,14 @@ func NewDownload(metadata *Metadata, downloadPath string) (d *Download, err erro
 		return nil, err
 	}
 
-	announceUrl, _ := url.Parse(d.Metadata.Announce)
-	// todo check schema
-
-	conn, _ := net.Dial("udp", announceUrl.Host)
-
-	d.tracker, err = NewTracker(d.PeerId, d.InfoHash, conn)
-	if err != nil {
-		return nil, err
-	}
-
 	d.peerStatus = make(map[string]bool)
 	d.Done = make(chan struct{})
 
 	d.announceTimer = time.NewTimer(0)
 	<-d.announceTimer.C
+
+	d.exitTimer = time.NewTimer(0)
+	//<-d.exitTimer.C
 
 	log.SetLevel(log.TraceLevel)
 

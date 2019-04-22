@@ -25,11 +25,12 @@ func TestDownload_Start(t *testing.T) {
 	download, err := NewDownload(metadata, tempDir)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
-		download.Start()
+		err = download.Start()
+		assert.NoError(t, err, "download finished with error")
 	}()
 
 	go func() {
@@ -99,7 +100,10 @@ func TestDownload_Start(t *testing.T) {
 		n, err = conn.WriteTo(buffer, addr)
 		assert.NoError(t, err, fmt.Sprintf("can not write 32 bytes: n = %d", n))
 
-		download.Stop()
+		go func() {
+			defer wg.Done()
+			download.Stop()
+		}()
 
 		buffer = make([]byte, 98)
 		n, addr, err = conn.ReadFrom(buffer)
@@ -147,7 +151,8 @@ func TestDownload_Finish(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		download.Start()
+		err = download.Start()
+		assert.NoError(t, err, "download finished with error")
 	}()
 
 	go func() {
