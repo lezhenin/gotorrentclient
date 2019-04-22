@@ -587,7 +587,7 @@ func (m *Manager) acceptPiece(pieceIndex, blockIndex int, data []byte) {
 		m.state.IncrementDownloaded(uint64(pieceLength))
 		m.state.DecrementLeft(uint64(pieceLength))
 
-		managerLogger.Infof("Downloaded %d/%d", m.state.downloaded, m.info.TotalLength)
+		managerLogger.Tracef("Downloaded %d/%d", m.state.downloaded, m.info.TotalLength)
 
 		m.downloadedPieceBitfield.Set(uint(pieceIndex))
 		m.state.SetBitfieldBit(uint(pieceIndex))
