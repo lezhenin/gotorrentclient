@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"github.com/juju/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/zeebo/bencode"
 	"io/ioutil"
@@ -42,6 +43,19 @@ func TestMetadata_New_SingleFile(t *testing.T) {
 	assert.False(t, metadata.Info.MultiFile, "metadata is not multi-file")
 	assert.EqualValues(t, 32*1024, metadata.Info.PieceLength, "piece length doesnt match")
 	assert.EqualValues(t, 1*1024*1024, metadata.Info.TotalLength, "total length doesnt match")
+}
+
+func TestMetadata_New_BadFormat(t *testing.T) {
+
+	filename := "../../test/test_download/test_data_bad_format_wrong_type.torrent"
+	_, err := NewMetadata(filename)
+	assert.Error(t, err, "can not decode metadata")
+	assert.IsType(t, DecodeError{}, errors.Cause(err), "unexpected error type")
+
+	filename = "../../test/test_download/test_data_localhost_bad_format_mandatory_field.torrent"
+	_, err = NewMetadata(filename)
+	assert.Error(t, err, "can not decode metadata")
+	assert.IsType(t, FieldError{}, errors.Cause(err), "unexpected error type")
 }
 
 func TestMetadata_New_WrongPiecesCount(t *testing.T) {

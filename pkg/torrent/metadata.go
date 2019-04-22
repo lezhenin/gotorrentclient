@@ -45,7 +45,8 @@ type DecodeError struct {
 }
 
 func (e DecodeError) Error() string {
-	return fmt.Sprintf("can't decode field '%s': %s", e.FieldName, e.Source)
+	return fmt.Sprintf("can't decode field '%s': %v (%t)",
+		e.FieldName, e.Source, e.Source)
 }
 
 type FieldError struct {
