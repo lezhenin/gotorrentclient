@@ -16,3 +16,8 @@ jobs:
         - ./scripts/test/build_dockers.sh
       script:
         - ./scripts/test/test_download.sh
+    - name: "Test Download Upload"
+        before_script:
+          - ./scripts/test/build_dockers.sh
+        script:
+          - ./scripts/test/test_download_upload.sh

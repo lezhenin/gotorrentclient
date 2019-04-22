@@ -11,33 +11,30 @@ echo "run docker containers"
 docker run --network=net-torrent-test -itd --name=test-tracker -p 8000:8000 webtorrent-tracker
 docker run --network=net-torrent-test -itd --name=test-original-seeder --link test-tracker:tracker  webtorrent-client
 docker run --network=net-torrent-test -itd --name=test-client-1 --link test-tracker:tracker --link test-original-seeder:seeder gotorrent-client
-docker run --network=net-torrent-test -itd --name=test-client-2 --link test-tracker:tracker --link test-original-seeder:seeder webtorrent-client
+docker run --network=net-torrent-test -itd --name=test-client-2 --link test-tracker:tracker --link test-original-seeder:seeder gotorrent-client
 
 # run seeder
-echo "run client 1"
+echo "run seeder"
 docker exec -d test-original-seeder \
 webtorrent download ./download/test_data_docker.torrent -o ./download/ --keep-seeding -q
 
 # wait announce
 sleep 5
 
-# run downloading
-echo "run client 2"
+# run leecher
+echo "run client 1"
 docker exec -i test-client-1 \
-gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 4 &
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 3 &
 
-# wait announce
-sleep 5
+sleep 15
 
-# run downloading with blocked seeder
+echo "stop seeder"
+docker stop test-original-seeder
 
-docker exec test-client-2 \
-bash -c "getent hosts seeder | awk '{ print \$1 }' > blocklist.txt"
-
-echo "run client 3"
+echo "run client 2"
 timeout --signal=SIGINT ${TIMOUT_SECS} \
 docker exec test-client-2 \
-webtorrent download ./download/test_data_docker.torrent -o ./output/ -b ./blocklist.txt
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 3 &
 
 TIMOUT_RETURN_CODE=$?
 if [[ ${TIMOUT_RETURN_CODE} -ne 0 ]]; then
@@ -48,7 +45,6 @@ fi
 echo "stop docker containers"
 docker stop test-client-2
 docker stop test-client-1
-docker stop test-original-seeder
 docker stop test-tracker
 
 echo "remove docker containers"
