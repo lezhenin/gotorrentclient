@@ -121,6 +121,8 @@ func TestDownload_Start(t *testing.T) {
 
 	wg.Wait()
 
+	conn.Close()
+
 }
 
 func TestDownload_Finish(t *testing.T) {
@@ -227,6 +229,18 @@ func TestDownload_Finish(t *testing.T) {
 		n, addr, err = trackerConn.ReadFrom(buffer)
 		assert.NoError(t, err, fmt.Sprintf("can not read 98 bytes: n = %d", n))
 
+		transactionId = binary.BigEndian.Uint32(buffer[12:16])
+
+		buffer = make([]byte, 20)
+		binary.BigEndian.PutUint32(buffer[0:4], 1)
+		binary.BigEndian.PutUint32(buffer[4:8], transactionId)
+		binary.BigEndian.PutUint32(buffer[8:12], 100)
+		binary.BigEndian.PutUint32(buffer[12:16], 0)
+		binary.BigEndian.PutUint32(buffer[16:20], 0)
+
+		n, err = trackerConn.WriteTo(buffer, addr)
+		assert.NoError(t, err, fmt.Sprintf("can not write 32 bytes: n = %d", n))
+
 	}()
 
 	go func() {
@@ -312,4 +326,6 @@ func TestDownload_Finish(t *testing.T) {
 
 	wg.Wait()
 
+	trackerConn.Close()
+	seederListener.Close()
 }
