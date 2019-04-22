@@ -253,7 +253,6 @@ func makePiecePayload(t *testing.T, requestPayload []byte, storage *Storage, met
 	index, begin, length, err := ParseRequestPayload(requestPayload)
 	assert.NoError(t, err, "can not parse request payload")
 	assert.EqualValues(t, 3, index, "request wrong index")
-	fmt.Println(index, begin, length)
 
 	data := make([]byte, length)
 	offset := int64(index*uint32(metadata.Info.PieceLength) + begin)
