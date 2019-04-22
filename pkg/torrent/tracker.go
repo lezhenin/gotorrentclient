@@ -126,7 +126,6 @@ func (t *Tracker) Run() (err error) {
 					t.closeMutex.Unlock()
 					return nil
 				} else {
-
 					trackerLogger.WithFields(logrus.Fields{
 						"address": t.connection.RemoteAddr(),
 					}).Error(err.Error())
