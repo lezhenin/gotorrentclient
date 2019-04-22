@@ -8,9 +8,15 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	SetLoggerLevel(AllLoggers, PanicLevel)
+	os.Exit(m.Run())
+}
 
 func TestDownload_Start(t *testing.T) {
 

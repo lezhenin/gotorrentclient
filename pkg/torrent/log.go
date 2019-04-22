@@ -71,6 +71,7 @@ func SetLoggerLevel(loggerType LoggerType, level LoggerLevel) {
 		for _, v := range loggers {
 			v.SetLevel(logrus.Level(level))
 		}
+		logrus.SetLevel(logrus.Level(level))
 	} else {
 		logger := loggers[loggerType]
 		logger.SetLevel(logrus.Level(level))
