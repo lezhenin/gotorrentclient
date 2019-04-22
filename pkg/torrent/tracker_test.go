@@ -13,18 +13,6 @@ import (
 	"time"
 )
 
-//func TestMain(m *testing.M) {
-//
-//	if testing.Verbose() {
-//		SetLoggerLevel(AllLoggers, TraceLevel)
-//	} else {
-//		SetLoggerLevel(AllLoggers, PanicLevel)
-//	}
-//
-//	code := m.Run()
-//	os.Exit(code)
-//}
-
 func TestTracker_Run(t *testing.T) {
 
 	infoHash := make([]byte, 20)
@@ -164,6 +152,46 @@ func TestTracker_Run(t *testing.T) {
 	tracker.Close()
 	wait.Wait()
 
+}
+
+func TestTracker_Run_Disconnect(t *testing.T) {
+
+	infoHash := make([]byte, 20)
+	myPeerId := make([]byte, 20)
+
+	rand.Read(infoHash)
+	rand.Read(myPeerId)
+
+	interiorConn, _ := net.Pipe()
+
+	tracker, err := NewTracker(myPeerId, infoHash, interiorConn)
+	if err != nil {
+		panic(err)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(1)
+
+	go func() {
+		defer wait.Done()
+		err := tracker.Run()
+		assert.Error(t, err, "tracker finished without error")
+	}()
+
+	time.Sleep(time.Millisecond)
+
+	_ = interiorConn.Close()
+
+	tracker.announceRequestChannel <- AnnounceRequest{
+		Started,
+		rand.Uint64(),
+		rand.Uint64(),
+		rand.Uint64(),
+		uint16(rand.Int()),
+		rand.Uint32(),
+	}
+
+	wait.Wait()
 }
 
 func TestTracker_Run_AfterClose(t *testing.T) {

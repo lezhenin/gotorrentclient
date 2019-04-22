@@ -458,6 +458,67 @@ func TestSeeder_Start(t *testing.T) {
 
 }
 
+func TestSeeder_Start_Disconnect(t *testing.T) {
+
+	infoHash := make([]byte, 20)
+	firstPeerId := make([]byte, 20)
+	secondPeerId := make([]byte, 20)
+
+	rand.Read(infoHash)
+	rand.Read(firstPeerId)
+	rand.Read(secondPeerId)
+
+	firstSeeder, _ := makeTestSeeder(infoHash, firstPeerId)
+	secondSeeder, _ := makeTestSeeder(infoHash, secondPeerId)
+
+	firstConn, secondConn := net.Pipe()
+
+	var wait sync.WaitGroup
+
+	wait.Add(2)
+
+	go func() {
+		defer wait.Done()
+		err := firstSeeder.Dial(firstConn)
+		assert.NoError(t, err, "seeder dial finished with error")
+
+	}()
+
+	go func() {
+		defer wait.Done()
+		err := secondSeeder.Accept(secondConn)
+		assert.NoError(t, err, "seeder accept finished with error")
+
+	}()
+
+	wait.Wait()
+
+	wait.Add(2)
+
+	go func() {
+		defer wait.Done()
+		firstSeeder.Start()
+	}()
+
+	go func() {
+		defer wait.Done()
+		secondSeeder.Start()
+	}()
+
+	firstSeeder.outcoming <- Message{KeepAlive, nil, nil}
+	message := <-secondSeeder.incoming
+	assert.EqualValues(t, KeepAlive, message.Id, "wrong message id")
+	assert.Nil(t, message.Payload, "wrong message payload")
+
+	_ = firstConn.Close()
+
+	wait.Wait()
+
+	firstSeeder.Close()
+	secondSeeder.Close()
+
+}
+
 func TestSeeder_MakePayload(t *testing.T) {
 
 	pieceIndex := rand.Uint32()
