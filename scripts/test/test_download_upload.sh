@@ -28,7 +28,7 @@ sleep 5
 
 echo "run leecher"
 docker exec -id test-client-1 \
-gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 3
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 3 &
 
 sleep 15
 
@@ -38,7 +38,7 @@ docker stop test-original-seeder
 echo "run another leecher"
 timeout --foreground --signal=SIGINT ${TIMOUT_SECS} \
 docker exec test-client-2 \
-gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -s -v 3
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -v 3
 
 TIMOUT_RETURN_CODE=$?
 if [[ ${TIMOUT_RETURN_CODE} -ne 0 ]]; then
