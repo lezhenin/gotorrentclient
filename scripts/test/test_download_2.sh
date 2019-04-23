@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# 1. run leeching client
+# 2. run seeding client
+# wait download to complete
+
 TIMOUT_SECS=30
 TEST_RETURN_CODE=0
 TIMOUT_RETURN_CODE=0
@@ -12,18 +16,17 @@ docker run --network=net-torrent-test -itd --name=test-tracker webtorrent-tracke
 docker run --network=net-torrent-test -itd --name=test-seeder --link test-tracker:tracker  webtorrent-client
 docker run --network=net-torrent-test -itd --name=test-leecher --link test-tracker:tracker --link test-original-seeder:seeder gotorrent-client
 
-# run seeder
+echo "run leeching client"
+timeout --foreground --signal=SIGINT ${TIMOUT_SECS} \
+docker exec test-leecher \
+gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -v 3 &
+
 echo "run seeding client"
 docker exec -d test-seeder \
 webtorrent download ./download/test_data_docker.torrent -o ./download/ --keep-seeding -q
 
-# wait announce
-sleep 5
-
-echo "run leeching client"
-timeout --signal=SIGINT ${TIMOUT_SECS} \
-docker exec test-leecher \
-gotorrentcli -t ./download/test_data_docker.torrent -o ./output/ -v 3
+# wait download complete
+wait
 
 TIMOUT_RETURN_CODE=$?
 if [[ ${TIMOUT_RETURN_CODE} -ne 0 ]]; then

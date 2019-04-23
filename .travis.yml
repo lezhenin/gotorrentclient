@@ -11,11 +11,16 @@ jobs:
       script:
         - docker run gotorrent-ci
     - stage: "Integration Tests"
-      name: "Test Download"
+      name: "Test Download 1"
       before_script:
         - ./scripts/test/build_dockers.sh
       script:
-        - ./scripts/test/test_download.sh
+        - ./scripts/test/test_download_1.sh
+    - name: "Test Download 2"
+      before_script:
+        - ./scripts/test/build_dockers.sh
+      script:
+        - ./scripts/test/test_download_2.sh
     - name: "Test Download Upload"
       before_script:
         - ./scripts/test/build_dockers.sh
