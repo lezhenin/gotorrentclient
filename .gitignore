@@ -127,3 +127,4 @@ fabric.properties
 
 # Kile
 *.backup
+*.kate-swp
